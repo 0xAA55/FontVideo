@@ -1,0 +1,16 @@
+*.a
+*.o
+*.bat
+*.exe
+*.txt
+*.sln
+*.sdf
+*.suo
+*.opensdf
+*.filters
+*.user
+msvc/.vs/
+*/intermediate/
+*/out
+dependencies/stdatomic_msvc.*
+dependencies/libsoundio.*
