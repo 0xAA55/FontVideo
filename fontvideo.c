@@ -53,7 +53,7 @@ static void fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count, 
     }
 }
 
-fontvideo_p fv_create(char *input_file, FILE *log_fp)
+fontvideo_p fv_create(char *input_file, FILE *log_fp, uint32_t x_resolution, uint32_t y_resolution)
 {
     fontvideo_p fv = NULL;
 
@@ -72,8 +72,26 @@ fontvideo_p fv_create(char *input_file, FILE *log_fp)
     fv->sio = siowrap_create(log_fp, SoundIoFormatFloat32NE, 48000, fv_on_write_sample);
     if (!fv->sio) goto FailExit;
 
+    fv->w = x_resolution;
+    fv->h = y_resolution;
+
     return fv;
 FailExit:
     fv_destroy(fv);
     return NULL;
+}
+
+int fv_poll_show(fontvideo_p fv, FILE *graphics_out_fp)
+{
+
+}
+
+void fv_destroy(fontvideo_p fv)
+{
+    if (!fv) return;
+
+    siowrap_destroy(fv->sio);
+    avdec_close(fv->av);
+
+    free(fv);
 }

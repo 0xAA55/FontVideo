@@ -5,6 +5,7 @@
 #include"siowrap.h"
 
 #include<stdio.h>
+#include<rttimer/rttimer.h>
 
 typedef struct fontvideo_frame_struct
 {
@@ -21,6 +22,9 @@ typedef struct fontvideo_struct
     int output_utf8;
 
     uint32_t w, h;
+
+
+
 
     avdec_p av;
     siowrap_p sio;
