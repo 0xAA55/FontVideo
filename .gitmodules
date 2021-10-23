@@ -1,0 +1,3 @@
+[submodule "rttimer"]
+	path = rttimer
+	url = https://github.com/0xAA55/rttimer.git
