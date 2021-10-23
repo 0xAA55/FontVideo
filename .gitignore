@@ -7,8 +7,10 @@
 *.opensdf
 *.filters
 *.user
+.vs
 msvc/.vs/
 */intermediate/
 */out
 dependencies/lib/*/stdatomic_msvc.*
 dependencies/lib/*/libsoundio.*
+dependencies/lib/*/rttimer.*
