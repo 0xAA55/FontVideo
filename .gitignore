@@ -10,5 +10,5 @@
 msvc/.vs/
 */intermediate/
 */out
-dependencies/stdatomic_msvc.*
-dependencies/libsoundio.*
+dependencies/lib/*/stdatomic_msvc.*
+dependencies/lib/*/libsoundio.*
