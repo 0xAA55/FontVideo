@@ -11,6 +11,6 @@
 msvc/.vs/
 */intermediate/
 */out
-dependencies/lib/*/stdatomic_msvc.*
-dependencies/lib/*/libsoundio.*
-dependencies/lib/*/rttimer.*
+lib/msvc/*/rttimer.*
+lib/msvc/*/libsoundio.*
+lib/msvc/*/stdatomic_msvc.*
