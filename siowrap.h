@@ -23,7 +23,7 @@ struct siowrap_struct
 	struct SoundIo *soundio;
 	struct SoundIoDevice *device;
 	struct SoundIoOutStream *outstream;
-}siowrap_t;
+};
 
 siowrap_p siowrap_create(FILE *log_fp, enum SoundIoFormat format, int sample_rate, on_write_sample write_cb);
 void siowrap_wait_events(siowrap_p s);
