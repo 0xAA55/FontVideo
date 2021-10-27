@@ -71,8 +71,8 @@ typedef struct avdec_struct
     FILE *log_fp;
 }avdec_t, *avdec_p;
 
-typedef void(*pfn_on_get_video)(void *bitmap, int width, int height, size_t pitch, double time_base, enum AVPixelFormat pixel_format);
-typedef void(*pfn_on_get_audio)(void **samples_of_channel, int channel_count, size_t num_samples_per_channel, double time_base, enum AVSampleFormat sample_fmt);
+typedef void(*pfn_on_get_video)(avdec_p av, void *bitmap, int width, int height, size_t pitch, double timestamp, enum AVPixelFormat pixel_format);
+typedef void(*pfn_on_get_audio)(avdec_p av, void **samples_of_channel, int channel_count, size_t num_samples_per_channel, double timestamp, enum AVSampleFormat sample_fmt);
 
 avdec_p avdec_open(char *path, FILE *log_fp);
 int avdec_get_video_format(avdec_p av, avdec_video_format_p vf);
