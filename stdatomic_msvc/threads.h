@@ -7,5 +7,12 @@
 
 #endif
 
+#if defined(_MSC_VER)
+
+int thrd_current();
+
+#endif
+
+
 #endif
 
