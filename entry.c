@@ -16,7 +16,7 @@ int main(int argc, char **argv)
 
     input_file = argv[1];
 
-    if (argv >= 3)
+    if (argc >= 3)
     {
         fp_out = fopen(argv[2], "w");
         if (!fp_out)
@@ -26,16 +26,16 @@ int main(int argc, char **argv)
     }
     else
     {
-        fp_out = stdout;
+        fp_out = stdout; 
     }
 
-    fv = fv_create(input_file, stderr, 80, 25);
+    fv = fv_create(input_file, stderr, fp_out, 80, 25, 5);
     if (!fv) goto FailExit;
 
-    while (fv_poll_show(fv, fp_out));
+    fv_show(fv);
 
     fv_destroy(fv);
-    if (fp_out != stdout) fclose(fp_out);
+    if (fp_out != stdout && fp_out != NULL) fclose(fp_out);
     return 0;
 FailExit:
     fv_destroy(fv);
