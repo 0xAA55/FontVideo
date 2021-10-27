@@ -1,3 +1,6 @@
 [submodule "rttimer"]
 	path = rttimer
 	url = https://github.com/0xAA55/rttimer.git
+[submodule "C_dict"]
+	path = C_dict
+	url = https://github.com/0xAA55/C_dict.git
