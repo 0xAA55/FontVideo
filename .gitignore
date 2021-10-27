@@ -12,5 +12,6 @@ msvc/.vs/
 */intermediate/
 */out
 lib/msvc/*/rttimer.*
+lib/msvc/*/dictionary.*
 lib/msvc/*/libsoundio.*
 lib/msvc/*/stdatomic_msvc.*
