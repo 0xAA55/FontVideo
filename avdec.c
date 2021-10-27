@@ -65,7 +65,7 @@ avdec_p avdec_open(char *path, FILE *log_fp)
 
     if (av->video_stream)
     {
-        AVCodec *codec = avcodec_find_decoder(av->video_stream->codecpar->codec_id);
+        const AVCodec *codec = avcodec_find_decoder(av->video_stream->codecpar->codec_id);
         if (!codec)
         {
             fprintf(log_fp, "No supported decoder for input file '%s'.\n", path);
@@ -96,7 +96,7 @@ avdec_p avdec_open(char *path, FILE *log_fp)
 
     if (av->audio_stream)
     {
-        AVCodec *codec = avcodec_find_decoder(av->audio_stream->codecpar->codec_id);
+        const AVCodec *codec = avcodec_find_decoder(av->audio_stream->codecpar->codec_id);
         if (!codec)
         {
             fprintf(log_fp, "No supported decoder for input file '%s'.\n", path);
@@ -231,11 +231,7 @@ int avdec_set_decoded_audio_format(avdec_p av, avdec_audio_format_p af)
 
     return 1;
 FailExit:
-    if (av->audio_conv)
-    {
-        swr_free(av->audio_conv);
-        av->audio_conv = NULL;
-    }
+    swr_free(&av->audio_conv);
     if (av->audio_conv_data)
     {
         av_freep(&av->audio_conv_data[0]);
@@ -249,7 +245,7 @@ static void on_video_decoded(avdec_p av, pfn_on_get_video on_get_video)
 {
     FILE *log_fp = av->log_fp;
     AVFrame *f = av->frame;
-    double time_position;
+    double time_position = (double)f->best_effort_timestamp * av_q2d(av->video_stream->time_base);;
     if (av->video_conv)
     {
         if (!sws_scale_frame(av->video_conv, av->video_conv_frame, av->frame))
@@ -259,8 +255,7 @@ static void on_video_decoded(avdec_p av, pfn_on_get_video on_get_video)
         }
         f = av->video_conv_frame;
     }
-    time_position = (double)f->best_effort_timestamp * av_q2d(av->video_stream->time_base);
-    on_get_video(f->data[0], f->width, f->height, f->linesize[0], time_position, f->format);
+    on_get_video(av, f->data[0], f->width, f->height, f->linesize[0], time_position, f->format);
 }
 
 static void on_audio_decoded(avdec_p av, pfn_on_get_audio on_get_audio)
@@ -288,11 +283,11 @@ static void on_audio_decoded(avdec_p av, pfn_on_get_audio on_get_audio)
         {
             goto FailExit;
         }
-        on_get_audio(av->audio_conv_data, av->audio_conv_channels, dst_samples, time_position, av->audio_conv_format.sample_fmt);
+        on_get_audio(av, av->audio_conv_data, av->audio_conv_channels, dst_samples, time_position, av->audio_conv_format.sample_fmt);
     }
     else
     {
-        on_get_audio(f->data, f->channels, f->nb_samples, time_position, f->format);
+        on_get_audio(av, f->data, f->channels, f->nb_samples, time_position, f->format);
     }
     return;
 FailExit:
@@ -415,7 +410,7 @@ void avdec_close(avdec_p *pav)
     if (!av) return;
 
     if (av->video_conv) sws_freeContext(av->video_conv);
-    if (av->audio_conv) swr_free(av->audio_conv);
+    swr_free(&av->audio_conv);
     if (av->audio_conv_data)
     {
         av_freep(&av->audio_conv_data[0]);
