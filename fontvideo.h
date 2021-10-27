@@ -6,32 +6,86 @@
 
 #include<stdio.h>
 #include<rttimer/rttimer.h>
+#include<unibmp.h>
 
-typedef struct fontvideo_frame_struct
+#include<stdatomic.h>
+
+typedef struct fontvideo_frame_struct fontvideo_frame_t, *fontvideo_frame_p;
+struct fontvideo_frame_struct
 {
     double timestamp;
+    uint32_t index;
+    atomic_int drawing;
+    atomic_int drawed;
+
     uint32_t w, h;
     uint32_t *data;
     uint32_t **row;
-}fontvideo_frame_t, *fontvideo_frame_p;
+    uint8_t *c_data;
+    uint8_t **c_row;
+
+    uint32_t raw_w, raw_h;
+    uint32_t *raw_data;
+    uint32_t **raw_data_row;
+    fontvideo_frame_p next;
+};
+
+typedef struct fontvideo_audio_struct fontvideo_audio_t, *fontvideo_audio_p;
+struct fontvideo_audio_struct
+{
+    double timestamp;
+    size_t frames;
+    float *buffer;
+    float *ptr_left;
+    size_t step_left; // not in bytes, but in sizeof(float)
+    float *ptr_right;
+    size_t step_right;
+    fontvideo_audio_p next;
+};
 
 typedef struct fontvideo_struct
 {
     void *userdata;
     FILE *log_fp;
+    FILE *graphics_out_fp;
     int output_utf8;
+    int need_chcp;
+    int verbose;
+    int verbose_threading;
 
-    uint32_t w, h;
+    uint32_t font_w, font_h;
+    UniformBitmap_p font_matrix;
+    uint32_t font_mat_w;
+    uint32_t font_mat_h;
+    size_t font_code_count;
+    uint32_t *font_codes;
 
+    double precache_seconds;
+    uint32_t output_w, output_h;
+    fontvideo_frame_p frames;
+    fontvideo_frame_p frame_last;
+    atomic_int frame_lock;
+    fontvideo_audio_p audios;
+    fontvideo_audio_p audio_last;
+    atomic_int audio_lock;
+    uint32_t frame_count;
+    uint32_t precached_frame_count;
+    uint32_t drawing_frame_count;
+    uint32_t drawed_frame_count;
 
+    char *utf8buf;
+    size_t utf8buf_size;
+    atomic_int doing_decoding;
+    atomic_int doing_output;
 
-
+    int tailed;
     avdec_p av;
     siowrap_p sio;
+    rttimer_t tmr;
 }fontvideo_t, *fontvideo_p;
 
-fontvideo_p fv_create(char *input_file, FILE *log_fp, uint32_t x_resolution, uint32_t y_resolution);
-int fv_poll_show(fontvideo_p fv, FILE *graphics_out_fp);
+fontvideo_p fv_create(char *input_file, FILE *log_fp, FILE *graphics_out_fp, uint32_t x_resolution, uint32_t y_resolution, double precache_seconds);
+int fv_show(fontvideo_p fv);
 void fv_destroy(fontvideo_p fv);
 
 #endif
