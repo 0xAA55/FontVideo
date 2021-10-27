@@ -7,10 +7,11 @@
 
 typedef struct siowrap_struct siowrap_t, *siowrap_p;
 
-typedef void (*on_write_sample)(siowrap_p s, int sample_rate, int channel_count, void **pointers_per_channel, size_t *sample_pointer_steps, size_t samples_to_write_per_channel);
+typedef size_t (*on_write_sample)(siowrap_p s, int sample_rate, int channel_count, void **pointers_per_channel, size_t *sample_pointer_steps, size_t samples_to_write_per_channel);
 
 struct siowrap_struct
 {
+	void *userdata;
 	FILE *log_fp;
 	int default_out_device_index;
 	enum SoundIoFormat format;
