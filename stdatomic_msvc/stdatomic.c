@@ -2,10 +2,11 @@
 
 #include <stdio.h>
 #include <intrin.h>
+#include <Windows.h>
 
 #include "stdatomic.h"
 
-int8_t zenny_atomic_fetch_add8(volatile atomic_schar* object, int8_t operand)
+int8_t zenny_atomic_fetch_add8(volatile atomic_schar *object, int8_t operand)
 {
     int8_t expected = *object;
     int8_t desired;
@@ -21,7 +22,7 @@ int8_t zenny_atomic_fetch_add8(volatile atomic_schar* object, int8_t operand)
     return expected;
 }
 
-int16_t zenny_atomic_fetch_add16(volatile atomic_short* object, int16_t operand)
+int16_t zenny_atomic_fetch_add16(volatile atomic_short *object, int16_t operand)
 {
     int16_t expected = *object;
     int16_t desired;
@@ -37,40 +38,17 @@ int16_t zenny_atomic_fetch_add16(volatile atomic_short* object, int16_t operand)
     return expected;
 }
 
-int32_t zenny_atomic_fetch_add32(volatile atomic_long* object, int32_t operand)
+int32_t zenny_atomic_fetch_add32(volatile atomic_long *object, int32_t operand)
 {
-    int32_t expected = *object;
-    int32_t desired;
-    bool success;
-
-    do
-    {
-        desired = expected + operand;
-    }
-    while ((success = zenny_atomic_compare_exchange32(object, &expected, desired)),
-        (success? (void)0 : _mm_pause()), 
-        !success);
-
-    return expected;
+    return InterlockedAdd(object, operand) - operand;
 }
 
-int64_t zenny_atomic_fetch_add64(volatile atomic_llong* object, int64_t operand)
+int64_t zenny_atomic_fetch_add64(volatile atomic_llong *object, int64_t operand)
 {
-    int64_t expected = *object;
-    int64_t desired;
-    bool success;
-
-    do
-    {
-        desired = expected + operand;
-    } while ((success = zenny_atomic_compare_exchange64(object, &expected, desired)),
-        (success ? (void)0 : _mm_pause()),
-        !success);
-
-    return expected;
+    return InterlockedAdd64(object, operand) - operand;
 }
 
-int8_t zenny_atomic_fetch_sub8(volatile atomic_schar* object, int8_t operand)
+int8_t zenny_atomic_fetch_sub8(volatile atomic_schar *object, int8_t operand)
 {
     int8_t expected = *object;
     int8_t desired;
@@ -86,7 +64,7 @@ int8_t zenny_atomic_fetch_sub8(volatile atomic_schar* object, int8_t operand)
     return expected;
 }
 
-int16_t zenny_atomic_fetch_sub16(volatile atomic_short* object, int16_t operand)
+int16_t zenny_atomic_fetch_sub16(volatile atomic_short *object, int16_t operand)
 {
     int16_t expected = *object;
     int16_t desired;
@@ -102,36 +80,14 @@ int16_t zenny_atomic_fetch_sub16(volatile atomic_short* object, int16_t operand)
     return expected;
 }
 
-int32_t zenny_atomic_fetch_sub32(volatile atomic_long* object, int32_t operand)
+int32_t zenny_atomic_fetch_sub32(volatile atomic_long *object, int32_t operand)
 {
-    int32_t expected = *object;
-    int32_t desired;
-    bool success;
-
-    do
-    {
-        desired = expected - operand;
-    } while ((success = zenny_atomic_compare_exchange32(object, &expected, desired)),
-        (success ? (void)0 : _mm_pause()),
-        !success);
-
-    return expected;
+    return InterlockedAdd(object, -operand) + operand;
 }
 
-int64_t zenny_atomic_fetch_sub64(volatile atomic_llong* object, int64_t operand)
+int64_t zenny_atomic_fetch_sub64(volatile atomic_llong *object, int64_t operand)
 {
-    int64_t expected = *object;
-    int64_t desired;
-    bool success;
-
-    do
-    {
-        desired = expected - operand;
-    } while ((success = zenny_atomic_compare_exchange64(object, &expected, desired)),
-        (success ? (void)0 : _mm_pause()),
-        !success);
-
-    return expected;
+    return InterlockedAdd64(object, -operand) + operand;
 }
 
 int8_t zenny_atomic_fetch_or8(volatile atomic_schar* object, int8_t operand)
