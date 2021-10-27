@@ -12,4 +12,4 @@ fontvideo: $(OBJS)
 	$(LD) $(LDFLAGS) $(OBJS) $(LDLIBS) -o $@
 
 clean:
-	rm -f fontvideo
+	rm -f fontvideo $(OBJS)
