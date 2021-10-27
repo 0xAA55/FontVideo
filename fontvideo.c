@@ -1,10 +1,16 @@
 #include"fontvideo.h"
 
 #include<stdlib.h>
-#include <locale.h>
+#include<locale.h>
+#include<assert.h>
+#include<C_dict/dictcfg.h>
+#include<omp.h>
+#include<threads.h>
 
 #if defined(_WIN32) || defined(__MINGW32__)
 #include <Windows.h>
+
+#define SUBDIR "\\"
 
 static void init_console(fontvideo_p fv)
 {
@@ -15,65 +21,1106 @@ static void init_console(fontvideo_p fv)
     }
 }
 
+static void set_cursor_xy(int x, int y)
+{
+    COORD pos = {x, y};
+    SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), pos);
+}
+
+static void set_console_color(FILE *con, int clr)
+{
+    WORD attr = FOREGROUND_INTENSITY;
+    if (clr & 1) attr |= FOREGROUND_RED;
+    if (clr & 2) attr |= FOREGROUND_GREEN;
+    if (clr & 4) attr |= FOREGROUND_BLUE;
+    SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), attr);
+}
+
+static void yield()
+{
+    if (!SwitchToThread()) Sleep(1);
+}
+
+# if defined(_DEBUG)
+#   define DEBUG_OUTPUT_SCREEN 1
+# endif
+
 #else
 
+#define SUBDIR "/"
 static void init_console(fontvideo_p fv)
 {
     setlocale(LC_ALL, "");
     fv->output_utf8 = 1;
 }
 
+static void set_cursor_xy(int x, int y)
+{
+    printf("\033[%d;%dH", y + 1, x + 1);
+}
+
+static void set_console_color(FILE *con, int clr)
+{
+    switch (clr)
+    {
+    case 0: fputs("\x1B[0m", con);  break;
+    case 1: fputs("\x1B[31m", con); break;
+    case 2: fputs("\x1B[32m", con); break;
+    case 3: fputs("\x1B[33m", con); break;
+    case 4: fputs("\x1B[34m", con); break;
+    case 5: fputs("\x1B[35m", con); break;
+    case 6: fputs("\x1B[36m", con); break;
+    case 7: fputs("\x1B[37m", con); break;
+    }
+}
+
+static void yield()
+{
+    sched_yield();
+}
+
+
 #endif
 
-static void fv_on_get_video(void *bitmap, int width, int height, size_t pitch, double time_base, enum AVSampleFormat pixel_format)
+static int get_thread_id()
 {
-    printf("Get video data: %p, %d, %d, %zu, %lf, %d\n", bitmap, width, height, pitch, time_base, pixel_format);
+    return thrd_current();
 }
 
-static void fv_on_get_audio(void **samples_of_channel, int channel_count, size_t num_samples_per_channel, double time_base, enum AVSampleFormat sample_fmt)
+static void lock_frame(fontvideo_p fv)
 {
-    printf("Get audio data: %p, %d, %zu, %lf, %d\n", samples_of_channel, channel_count, num_samples_per_channel, time_base, sample_fmt);
-}
-
-static void fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count, void **pointers_per_channel, size_t *sample_pointer_steps, size_t samples_to_write_per_channel)
-{
-    size_t i;
-    int c;
-
-    for (i = 0; i < samples_to_write_per_channel; i++)
+    atomic_int readout;
+    atomic_int cur_id = get_thread_id();
+    while ((readout = atomic_exchange(&fv->frame_lock, cur_id)) != 0)
     {
-        for (c = 0; c < channel_count; c++)
+        yield();
+        if (readout == cur_id)
         {
-            float *sample_ptr = pointers_per_channel[c];
-
-            sample_ptr[0] = 0;
-
-            sample_ptr = (float*)((uint8_t *)sample_ptr + sample_pointer_steps[c]);
+            ; // fprintf(stderr, "Recursive locked by %d.\n", cur_id);
+        }
+        if (fv->verbose_threading)
+        {
+            ; // fprintf(stderr, "Frame chainlist locked by %d. (%d)\n", readout, cur_id);
         }
     }
 }
 
-fontvideo_p fv_create(char *input_file, FILE *log_fp, uint32_t x_resolution, uint32_t y_resolution)
+static int try_lock_frame(fontvideo_p fv)
+{
+    atomic_int expected = 0;
+    atomic_int cur_id = get_thread_id();
+
+    if (atomic_compare_exchange_strong(&fv->frame_lock, &expected, cur_id))
+    {
+        return 1;
+    }
+    else
+    {
+        if (fv->verbose_threading)
+        {
+            fprintf(stderr, "Frame chainlist locked by %d, try lock failed. (%d)\n", expected, cur_id);
+        }
+        return 0;
+    }
+}
+
+static void unlock_frame(fontvideo_p fv)
+{
+    atomic_exchange(&fv->frame_lock, 0);
+}
+
+static void lock_audio(fontvideo_p fv)
+{
+    atomic_int readout;
+    atomic_int cur_id = get_thread_id();
+    while ((readout = atomic_exchange(&fv->audio_lock, cur_id)) != 0)
+    {
+        yield();
+        if (fv->verbose_threading)
+        {
+            fprintf(stderr, "Audio chainlist locked by %d. (%d)\n", readout, cur_id);
+        }
+    }
+}
+
+static void unlock_audio(fontvideo_p fv)
+{
+    atomic_exchange(&fv->audio_lock, 0);
+}
+
+static void frame_delete(fontvideo_frame_p f)
+{
+    if (!f) return;
+
+    free(f->raw_data);
+    free(f->raw_data_row);
+    free(f->data);
+    free(f->row);
+    free(f->c_data);
+    free(f->c_row);
+}
+
+static void audio_delete(fontvideo_audio_p a)
+{
+    if (!a) return;
+
+    free(a->buffer);
+}
+
+static void *move_ptr(void *ptr, size_t step)
+{
+    return (uint8_t *)ptr + step;
+}
+
+static fontvideo_audio_p audio_create(void *samples, int channel_count, size_t num_samples_per_channel, double timestamp);
+
+static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count, void **pointers_per_channel, size_t *sample_pointer_steps, size_t samples_to_write_per_channel)
+{
+    ptrdiff_t i;
+    fontvideo_p fv = s->userdata;
+    float *dptr = pointers_per_channel[0];
+    float *dptr_l = dptr;
+    float *dptr_r = dptr;
+    size_t dstep = sample_pointer_steps[0];
+    size_t dstep_l = dstep;
+    size_t dstep_r = dstep;
+    size_t total = 0;
+
+    if (channel_count < 1 || channel_count > 2) return 0;
+
+    sample_rate;
+
+    if (channel_count == 2)
+    {
+        dptr_l = dptr;
+        dptr_r = pointers_per_channel[1];
+        dstep_l = dstep;
+        dstep_r = sample_pointer_steps[1];
+    }
+
+    lock_audio(fv);
+    while (fv->audios)
+    {
+        fontvideo_audio_p next = fv->audios->next;
+        float *sptr = fv->audios->buffer;
+        float *sptr_l = fv->audios->ptr_left;
+        float *sptr_r = fv->audios->ptr_right;
+        size_t sstep = 1;
+        size_t sstep_l = fv->audios->step_left;
+        size_t sstep_r = fv->audios->step_right;
+        ptrdiff_t writable = fv->audios->frames;
+        size_t wrote = 0;
+        if ((size_t)writable > samples_to_write_per_channel - total) writable = (ptrdiff_t)(samples_to_write_per_channel - total);
+        if (!writable) break;
+        switch (channel_count)
+        {
+        case 1:
+            for (i = 0; i < writable; i++)
+            {
+                dptr[0] = sptr[0];
+                dptr = move_ptr(dptr, dstep);
+                sptr += sstep;
+            }
+            wrote = i;
+            total += wrote;
+            break;
+        case 2:
+            for (i = 0; i < writable; i++)
+            {
+                dptr_l[0] = sptr_l[0];
+                dptr_r[0] = sptr_r[0];
+                dptr_l = move_ptr(dptr_l, dstep_l);
+                dptr_r = move_ptr(dptr_r, dstep_r);
+                sptr_l += sstep_l;
+                sptr_r += sstep_r;
+            }
+            wrote = i;
+            total += wrote;
+            break;
+        }
+        if (wrote >= fv->audios->frames)
+        {
+            audio_delete(fv->audios);
+            fv->audios = next;
+        }
+        else
+        {
+            size_t rest = fv->audios->frames - wrote;
+            fontvideo_audio_p replace;
+            replace = audio_create(&fv->audios->buffer[wrote * channel_count], channel_count, rest, fv->audios->timestamp);
+            replace->next = next;
+            next = fv->audios;
+            fv->audios = replace;
+            audio_delete(next);
+            break;
+        }
+    }
+    if (!fv->audios)
+    {
+        fv->audio_last = NULL;
+        if (total < samples_to_write_per_channel)
+        {
+            ptrdiff_t writable = samples_to_write_per_channel - total;
+            switch (channel_count)
+            {
+            case 1:
+                for (i = 0; i < writable; i++)
+                {
+                    dptr[0] = 0;
+                    dptr = move_ptr(dptr, dstep);
+                }
+                total += writable;
+                break;
+            case 2:
+                for (i = 0; i < writable; i++)
+                {
+                    dptr_l[0] = 0;
+                    dptr_r[0] = 0;
+                    dptr_l = move_ptr(dptr_l, dstep_l);
+                    dptr_r = move_ptr(dptr_r, dstep_r);
+                }
+                total += writable;
+                break;
+            }
+        }
+    }
+    unlock_audio(fv);
+    return total;
+}
+
+static void u32toutf8
+(
+    char **ppUTF8,
+    const uint32_t CharCode
+)
+{
+    char *pUTF8 = ppUTF8[0];
+
+    //Êä³öUTF-8±àÂëµÄ×Ö·û´®
+    if (CharCode >= 0x4000000)
+    {
+        *pUTF8++ = 0xFC | ((CharCode >> 30) & 0x01);
+        *pUTF8++ = 0x80 | ((CharCode >> 24) & 0x3F);
+        *pUTF8++ = 0x80 | ((CharCode >> 18) & 0x3F);
+        *pUTF8++ = 0x80 | ((CharCode >> 12) & 0x3F);
+        *pUTF8++ = 0x80 | ((CharCode >> 6) & 0x3F);
+        *pUTF8++ = 0x80 | (CharCode & 0x3F);
+    }
+    else if (CharCode >= 0x200000)
+    {
+        *pUTF8++ = 0xF8 | ((CharCode >> 24) & 0x03);
+        *pUTF8++ = 0x80 | ((CharCode >> 18) & 0x3F);
+        *pUTF8++ = 0x80 | ((CharCode >> 12) & 0x3F);
+        *pUTF8++ = 0x80 | ((CharCode >> 6) & 0x3F);
+        *pUTF8++ = 0x80 | (CharCode & 0x3F);
+    }
+    else if (CharCode >= 0x10000)
+    {
+        *pUTF8++ = 0xF0 | ((CharCode >> 18) & 0x07);
+        *pUTF8++ = 0x80 | ((CharCode >> 12) & 0x3F);
+        *pUTF8++ = 0x80 | ((CharCode >> 6) & 0x3F);
+        *pUTF8++ = 0x80 | (CharCode & 0x3F);
+    }
+    else if (CharCode >= 0x0800)
+    {
+        *pUTF8++ = 0xE0 | ((CharCode >> 12) & 0x0F);
+        *pUTF8++ = 0x80 | ((CharCode >> 6) & 0x3F);
+        *pUTF8++ = 0x80 | (CharCode & 0x3F);
+    }
+    else if (CharCode >= 0x0080)
+    {
+        *pUTF8++ = 0xC0 | ((CharCode >> 6) & 0x1F);
+        *pUTF8++ = 0x80 | (CharCode & 0x3F);
+    }
+    else
+    {
+        *pUTF8++ = (char)CharCode;
+    }
+    ppUTF8[0] = pUTF8;
+}
+
+static uint32_t utf8tou32char
+(
+    char **ppUTF8
+)
+{
+    size_t cb = 0;
+    uint32_t ret = 0;
+    char *pUTF8 = ppUTF8[0];
+
+    while (cb < 6 && pUTF8[cb]) cb++;
+
+    if ((pUTF8[0] & 0xFE) == 0xFC)//1111110x
+    {
+        if (6 <= cb)
+        {
+            ret =
+                (((uint32_t)pUTF8[0] & 0x01) << 30) |
+                (((uint32_t)pUTF8[1] & 0x3F) << 24) |
+                (((uint32_t)pUTF8[2] & 0x3F) << 18) |
+                (((uint32_t)pUTF8[3] & 0x3F) << 12) |
+                (((uint32_t)pUTF8[4] & 0x3F) << 6) |
+                (((uint32_t)pUTF8[5] & 0x3F) << 0);
+            ppUTF8[0] = &pUTF8[6];
+            return ret;
+        }
+        else
+            goto FailExit;
+    }
+    else if ((pUTF8[0] & 0xFC) == 0xF8)//111110xx
+    {
+        if (5 <= cb)
+        {
+            ret =
+                (((uint32_t)pUTF8[0] & 0x03) << 24) |
+                (((uint32_t)pUTF8[1] & 0x3F) << 18) |
+                (((uint32_t)pUTF8[2] & 0x3F) << 12) |
+                (((uint32_t)pUTF8[3] & 0x3F) << 6) |
+                (((uint32_t)pUTF8[4] & 0x3F) << 0);
+            ppUTF8[0] = &pUTF8[5];
+            return ret;
+        }
+        else
+            goto FailExit;
+    }
+    else if ((pUTF8[0] & 0xF8) == 0xF0)//11110xxx
+    {
+        if (4 <= cb)
+        {
+            ret =
+                (((uint32_t)pUTF8[0] & 0x07) << 18) |
+                (((uint32_t)pUTF8[1] & 0x3F) << 12) |
+                (((uint32_t)pUTF8[2] & 0x3F) << 6) |
+                (((uint32_t)pUTF8[3] & 0x3F) << 0);
+            ppUTF8[0] = &pUTF8[4];
+            return ret;
+        }
+        else
+            goto FailExit;
+    }
+    else if ((pUTF8[0] & 0xF0) == 0xE0)//1110xxxx
+    {
+        if (3 <= cb)
+        {
+            ret =
+                (((uint32_t)pUTF8[0] & 0x0F) << 12) |
+                (((uint32_t)pUTF8[1] & 0x3F) << 6) |
+                (((uint32_t)pUTF8[2] & 0x3F) << 0);
+            ppUTF8[0] = &pUTF8[3];
+            return ret;
+        }
+        else
+            goto FailExit;
+    }
+    else if ((pUTF8[0] & 0xE0) == 0xC0)//110xxxxx
+    {
+        if (2 <= cb)
+        {
+            ret =
+                (((uint32_t)pUTF8[0] & 0x1F) << 6) |
+                (((uint32_t)pUTF8[1] & 0x3F) << 0);
+            ppUTF8[0] = &pUTF8[2];
+            return ret;
+        }
+        else
+            goto FailExit;
+    }
+    else if ((pUTF8[0] & 0xC0) == 0x80)//10xxxxxx
+    {
+        goto FailExit;
+    }
+    else if ((pUTF8[0] & 0x80) == 0x00)//0xxxxxxx
+    {
+        ret = pUTF8[0] & 0x7F;
+        ppUTF8[0] = &pUTF8[1];
+        return ret;
+    }
+FailExit:
+    return ret;
+}
+
+static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
+{
+    char buf[4096];
+    FILE *log_fp = fv->log_fp;
+    dict_p d_meta = NULL;
+    dict_p d_font = NULL;
+    char *font_bmp = NULL;
+    char *font_code_txt = NULL;
+    FILE *fp_code = NULL;
+    size_t i = 0;
+    char *font_raw_code = NULL;
+    char *ch;
+    size_t font_raw_code_size = 0;
+    size_t font_count_max = 0;
+    uint32_t code;
+
+    snprintf(buf, sizeof buf, "%s"SUBDIR"%s", assets_dir, meta_file);
+    d_meta = dictcfg_load(buf, log_fp);
+    if (!d_meta) goto FailExit;
+
+    d_font = dictcfg_section(d_meta, "[font]");
+    if (!d_font) goto FailExit;
+
+    font_bmp = dictcfg_getstr(d_font, "font_bmp", "font.bmp");
+    font_code_txt = dictcfg_getstr(d_font, "font_code", "gb2312_code.txt");
+    fv->font_w = dictcfg_getint(d_font, "font_width", 12);
+    fv->font_h = dictcfg_getint(d_font, "font_height", 12);
+    fv->font_code_count = font_count_max = dictcfg_getint(d_font, "font_count", 127);
+    fv->font_codes = malloc(font_count_max * sizeof fv->font_codes[0]);
+    if (!fv->font_codes)
+    {
+        fprintf(log_fp, "Could not load font code file from '%s': '%s'\n", buf, strerror(errno));
+        goto FailExit;
+    }
+
+    snprintf(buf, sizeof buf, "%s"SUBDIR"%s", assets_dir, font_bmp);
+    fv->font_matrix = UB_CreateFromFile(buf, log_fp);
+    if (!fv->font_matrix)
+    {
+        fprintf(log_fp, "Could not load font matrix bitmap file from '%s'\n", buf);
+        goto FailExit;
+    }
+
+    fv->font_mat_w = fv->font_matrix->Width / fv->font_w;
+    fv->font_mat_h = fv->font_matrix->Height / fv->font_h;
+
+    snprintf(buf, sizeof buf, "%s"SUBDIR"%s", assets_dir, font_code_txt);
+    fp_code = fopen(buf, "r");
+    if (!fp_code)
+    {
+        fprintf(log_fp, "Could not load font code file from '%s': '%s'\n", buf, strerror(errno));
+        goto FailExit;
+    }
+    fseek(fp_code, 0, SEEK_END);
+    font_raw_code_size = ftell(fp_code);
+    fseek(fp_code, 0, SEEK_SET);
+    font_raw_code = malloc(font_raw_code_size + 1);
+    if (!font_raw_code)
+    {
+        fprintf(log_fp, "Could not load font code file from '%s': '%s'\n", buf, strerror(errno));
+        goto FailExit;
+    }
+    font_raw_code[font_raw_code_size] = '\0';
+    if (!fread(font_raw_code, font_raw_code_size, 1, fp_code))
+    {
+        fprintf(log_fp, "Could not load font code file from '%s': '%s'\n", buf, strerror(errno));
+        goto FailExit;
+    }
+    fclose(fp_code); fp_code = NULL;
+
+    ch = font_raw_code;
+    do
+    {
+        code = utf8tou32char(&ch);
+        if (!code) break;
+        if (code > 127) fv->need_chcp = 1;
+        if (i >= font_count_max)
+        {
+            size_t new_size = i * 3 / 2 + 1;
+            uint32_t *new_ptr = realloc(fv->font_codes, new_size * sizeof new_ptr[0]);
+            if (!new_ptr)
+            {
+                fprintf(log_fp, "Could not load font code file from '%s': '%s'\n", buf, strerror(errno));
+                goto FailExit;
+            }
+            fv->font_codes = new_ptr;
+            font_count_max = new_size;
+        }
+        fv->font_codes[i++] = code;
+    } while (code);
+
+    if (i != fv->font_code_count)
+    {
+        uint32_t *new_ptr = realloc(fv->font_codes, i * sizeof fv->font_codes[0]);
+        if (new_ptr) fv->font_codes = new_ptr;
+
+        fprintf(log_fp, "Actual count of codes read out from code file '%s' is '%zu' rather than '%zu'\n", buf, i, fv->font_code_count);
+        fv->font_code_count = i;
+    }
+
+    free(font_raw_code);
+    dict_delete(d_meta);
+    return 1;
+FailExit:
+    if (fp_code) fclose(fp_code);
+    free(font_raw_code);
+    dict_delete(d_meta);
+    return 0;
+}
+
+static fontvideo_frame_p frame_create(fontvideo_p fv, uint32_t w, uint32_t h, double timestamp, void *bitmap, int bmp_width, int bmp_height, size_t bmp_pitch)
+{
+    ptrdiff_t i;
+    fontvideo_frame_p f = calloc(1, sizeof f[0]);
+    if (!f) return f;
+    fv;
+
+    f->timestamp = timestamp;
+    f->w = w;
+    f->h = h;
+    f->data = calloc(w * h, sizeof f->data[0]);
+    if (!f->data) goto FailExit;
+    f->row = malloc(h * sizeof f->row[0]);
+    if (!f->row) goto FailExit;
+    f->c_data = malloc((size_t)w * h);
+    if (!f->c_data) goto FailExit;
+    f->c_row = malloc(h * sizeof f->c_row[0]);
+    if (!f->c_row) goto FailExit;
+    for (i = 0; i < (ptrdiff_t)h; i++)
+    {
+        f->row[i] = &f->data[i * w];
+        f->c_row[i] = &f->c_data[i * w];
+    }
+
+    f->raw_w = bmp_width;
+    f->raw_h = bmp_height;
+    f->raw_data = malloc(bmp_pitch * bmp_height);
+    if (!f->raw_data) goto FailExit;
+    f->raw_data_row = malloc(bmp_height * sizeof f->raw_data_row[0]);
+    if (!f->raw_data_row) goto FailExit;
+#pragma omp parallel for
+    for (i = 0; i < (ptrdiff_t)bmp_height; i++)
+    {
+        f->raw_data_row[i] = (void *)&(((uint8_t *)f->raw_data)[i * bmp_pitch]);
+        memcpy(f->raw_data_row[i], &((uint8_t*)bitmap)[i * bmp_pitch], bmp_pitch);
+    }
+    
+    return f;
+FailExit:
+    frame_delete(f);
+    return NULL;
+}
+
+static void draw_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
+{
+    int fy, fw, fh;
+    UniformBitmap_p fm = fv->font_matrix;
+    size_t f_pixel_count = fv->font_w * fv->font_h;
+
+    if (f->drawed) return;
+
+    fw = f->w;
+    fh = f->h;
+
+#pragma omp parallel for
+    for (fy = 0; fy < fh; fy++)
+    {
+        int fx, sx, sy;
+        sy = fy * fv->font_h;
+        for (fx = 0; fx < fw; fx++)
+        {
+            int fmx, fmy;
+            int x, y;
+            uint32_t avr_r = 0, avr_g = 0, avr_b = 0;
+            size_t cur_code_index = 0;
+            size_t best_code_index = 0;
+            int best_fmx = 0, best_fmy = 0;
+            float best_score = -9999999.0f;
+            sx = fx * fv->font_w;
+
+            if (fx == fw - 1)
+            {
+                f->row[fy][fx] = '\n';
+                continue;
+            }
+
+            // Iterate the font matrix
+            for (fmy = 0; fmy < (int)fv->font_mat_h; fmy++)
+            {
+                int srcy = fmy * fv->font_h;
+                for (fmx = 0; fmx < (int)fv->font_mat_w; fmx++)
+                {
+                    int srcx = fmx * fv->font_w;
+                    float score = 0;
+                    float font_normalize = 0;
+
+                    // Compare each pixels and collect the scores.
+                    for (y = 0; y < (int)fv->font_h; y++)
+                    {
+                        for (x = 0; x < (int)fv->font_w; x++)
+                        {
+                            union pixel
+                            {
+                                uint8_t u8[4];
+                                uint32_t u32;
+                            }   *src_pixel = (void *)&(f->raw_data_row[sy + y][sx + x]),
+                                *font_pixel = (void *)&(fm->RowPointers[fm->Height - 1 - (srcy + y)][srcx + x]);
+                            float src_lum = sqrtf(
+                                (uint32_t)src_pixel->u8[0] * src_pixel->u8[0] +
+                                (uint32_t)src_pixel->u8[1] * src_pixel->u8[1] +
+                                (uint32_t)src_pixel->u8[2] * src_pixel->u8[2]) / 441.672955930063709849498817084f;
+                            float font_lum = font_pixel->u8[0] ? 1.0f : 0.0f;
+
+                            // font_lum -= 0.5;
+                            // src_lum = sqrtf(src_lum);
+                            src_lum -= 0.5;
+                            score += src_lum * font_lum;
+                            font_normalize += font_lum * font_lum;
+                        }
+                    }
+
+                    if (font_normalize >= 0.000001f)
+                    score /= sqrtf(font_normalize);
+                    if (score > best_score)
+                    {
+                        best_score = score;
+                        best_code_index = cur_code_index;
+                        best_fmx = fmx * fv->font_w;
+                        best_fmy = fmy * fv->font_h;
+                    }
+
+                    cur_code_index++;
+                    if (cur_code_index >= fv->font_code_count) break;
+                }
+            }
+
+            for (y = 0; y < (int)fv->font_h; y++)
+            {
+                for (x = 0; x < (int)fv->font_w; x++)
+                {
+                    union pixel
+                    {
+                        uint8_t u8[4];
+                        uint32_t u32;
+                    }   *src_pixel = (void *)&(f->raw_data_row[sy + y][sx + x]);
+
+                    avr_b += src_pixel->u8[0];
+                    avr_g += src_pixel->u8[1];
+                    avr_r += src_pixel->u8[2];
+                }
+            }
+
+            avr_b /= f_pixel_count;
+            avr_g /= f_pixel_count;
+            avr_r /= f_pixel_count;
+
+            f->row[fy][fx] = fv->font_codes[best_code_index];
+            f->c_row[fy][fx] =
+                ((avr_b & 0x80) >> 5) |
+                ((avr_g & 0x80) >> 6) |
+                ((avr_r & 0x80) >> 7);
+        }
+    }
+
+    atomic_exchange(&f->drawed, get_thread_id());
+    lock_frame(fv);
+    fv->drawed_frame_count++;
+    fv->drawing_frame_count--;
+    unlock_frame(fv);
+
+#ifdef DEBUG_OUTPUT_SCREEN
+#pragma comment (lib, "user32.lib")
+#pragma comment (lib, "gdi32.lib")
+    if (1)
+    {
+        HDC hDC = GetDC(NULL);
+        BITMAPINFOHEADER BMIF =
+        {
+            40, f->raw_w, -f->raw_h, 1, 32, 0
+        };
+        StretchDIBits(hDC, 0, 0, f->raw_w, f->raw_h,
+            0, 0, f->raw_w, f->raw_h,
+            f->raw_data,
+            (BITMAPINFO *)&BMIF,
+            DIB_RGB_COLORS,
+            SRCCOPY);
+        ReleaseDC(NULL, hDC);
+    }
+#endif
+
+    // free(f->raw_data); f->raw_data = NULL;
+    // free(f->raw_data_row); f->raw_data_row = NULL;
+}
+
+static void locked_add_frame_to_fv(fontvideo_p fv, fontvideo_frame_p f)
+{
+    double timestamp;
+    fontvideo_frame_p iter;
+
+    lock_frame(fv);
+
+    timestamp = f->timestamp;
+    f->index = fv->frame_count++;
+    fv->precached_frame_count ++;
+
+    if (!fv->frames)
+    {
+        fv->frames = f;
+        fv->frame_last = f;
+        goto Unlock;
+    }
+
+    if (timestamp >= fv->frame_last->timestamp)
+    {
+        fv->frame_last->next = f;
+        fv->frame_last = f;
+        goto Unlock;
+    }
+
+    if (timestamp < fv->frames->timestamp)
+    {
+        f->next = fv->frames;
+        fv->frames = f;
+        goto Unlock;
+    }
+
+    iter = fv->frames;
+    while (timestamp >= iter->timestamp)
+    {
+        if (timestamp < iter->next->timestamp)
+        {
+            f->next = iter->next;
+            iter->next = f;
+            goto Unlock;
+        }
+        iter = iter->next;
+    }
+Unlock:
+    unlock_frame(fv);
+}
+
+static fontvideo_audio_p audio_create(void *samples, int channel_count, size_t num_samples_per_channel, double timestamp)
+{
+    fontvideo_audio_p a = NULL;
+    ptrdiff_t i;
+    float *src = samples;
+    
+    if (channel_count < 1 || channel_count > 2) return a;
+    
+    a = calloc(1, sizeof a[0]);
+    if (!a) return a;
+
+    a->timestamp = timestamp;
+    a->frames = num_samples_per_channel;
+    a->buffer = malloc(num_samples_per_channel * channel_count * sizeof a->buffer[0]);
+    if (!a->buffer) goto FailExit;
+    switch (channel_count)
+    {
+    case 1:
+        a->ptr_left = &a->buffer[0];
+        a->ptr_right = &a->buffer[0];
+        a->step_left = 1;
+        a->step_right = 1;
+#pragma omp parallel for
+        for (i = 0; i < (ptrdiff_t)num_samples_per_channel; i++)
+        {
+            a->buffer[i] = src[i];
+        }
+        break;
+    case 2:
+        a->ptr_left = &a->buffer[0];
+        a->ptr_right = &a->buffer[1];
+        a->step_left = 2;
+        a->step_right = 2;
+#pragma omp parallel for
+        for (i = 0; i < (ptrdiff_t)num_samples_per_channel; i++)
+        {
+            a->ptr_left[i * a->step_left] = src[i * 2 + 0];
+            a->ptr_right[i * a->step_right] = src[i * 2 + 1];
+        }
+        break;
+    }
+
+    return a;
+FailExit:
+    audio_delete(a);
+    return NULL;
+}
+
+static void locked_add_audio_to_fv(fontvideo_p fv, fontvideo_audio_p a)
+{
+    double timestamp;
+    fontvideo_audio_p iter;
+    
+    timestamp = a->timestamp;
+
+    lock_audio(fv);
+
+    if (!fv->audios)
+    {
+        fv->audios = a;
+        fv->audio_last = a;
+        goto Unlock;
+    }
+
+    if (timestamp >= fv->audio_last->timestamp)
+    {
+        fv->audio_last->next = a;
+        fv->audio_last = a;
+        goto Unlock;
+    }
+
+    if (timestamp < fv->audios->timestamp)
+    {
+        a->next = fv->audios;
+        fv->audios = a;
+        goto Unlock;
+    }
+
+    iter = fv->audios;
+    while (timestamp >= iter->timestamp)
+    {
+        if (timestamp < iter->next->timestamp)
+        {
+            a->next = iter->next;
+            iter->next = a;
+            goto Unlock;
+        }
+        iter = iter->next;
+    }
+Unlock:
+    unlock_audio(fv);
+}
+
+static void fv_on_get_video(avdec_p av, void *bitmap, int width, int height, size_t pitch, double timestamp, enum AVPixelFormat pixel_format)
+{
+    fontvideo_p fv = av->userdata;
+    fontvideo_frame_p f = frame_create(fv, fv->output_w, fv->output_h, timestamp, bitmap, width, height, pitch);
+    if (!f)
+    {
+        return;
+    }
+    locked_add_frame_to_fv(fv, f);
+
+    pixel_format;
+    // printf("Get video data: %p, %d, %d, %zu, %lf, %d\n", bitmap, width, height, pitch, timestamp, pixel_format);
+}
+
+static void fv_on_get_audio(avdec_p av, void **samples_of_channel, int channel_count, size_t num_samples_per_channel, double timestamp, enum AVSampleFormat sample_fmt)
+{
+    fontvideo_p fv = av->userdata;
+    fontvideo_audio_p a = audio_create(samples_of_channel[0], channel_count, num_samples_per_channel, timestamp);
+    if (!a)
+    {
+        return;
+    }
+    locked_add_audio_to_fv(fv, a);
+
+    sample_fmt;
+    // printf("Get audio data: %p, %d, %zu, %lf, %d\n", samples_of_channel, channel_count, num_samples_per_channel, timestamp, sample_fmt);
+}
+
+static fontvideo_frame_p get_frame_and_draw(fontvideo_p fv)
+{
+    fontvideo_frame_p f = NULL;
+    if (!fv->frames) return NULL;
+    lock_frame(fv);
+    if (fv->precached_frame_count <= fv->drawed_frame_count + fv->drawing_frame_count)
+    {
+        unlock_frame(fv);
+        return NULL;
+    }
+    f = fv->frames;
+    unlock_frame(fv);
+    while (f)
+    {
+        atomic_int expected = 0;
+        if (f->drawed)
+        {
+            f = f->next;
+            continue;
+        }
+        if (atomic_compare_exchange_strong(&f->drawing, &expected, get_thread_id()))
+        {
+            lock_frame(fv);
+            fv->drawing_frame_count++;
+            unlock_frame(fv);
+            
+            // True, not drawing, set it as drawing, then draw.
+            if (fv->verbose_threading)
+            {
+                fprintf(stderr, "Got frame to draw. (%d)\n", get_thread_id());
+            }
+            draw_frame_from_rgbabitmap(fv, f);
+            break;
+        }
+        else
+        {
+            // This one is occupied and perform drawing.
+            f = f->next;
+            continue;
+        }
+    }
+    return f;
+}
+
+static int output_drawed_video(fontvideo_p fv, double timestamp)
+{
+    char* utf8buf = fv->utf8buf;
+    size_t utf8buf_count;
+    fontvideo_frame_p cur = NULL;
+    int cur_color = 0;
+
+    if (!fv->frames) return 0;
+    if (!fv->drawed_frame_count) return 0;
+
+    if (atomic_exchange(&fv->doing_output, 1)) return 0;
+
+    lock_frame(fv);
+    cur = fv->frames;
+    unlock_frame(fv);
+    if (!cur) goto FailExit;
+    if (timestamp >= cur->timestamp)
+    {
+        fontvideo_frame_p next = cur->next;
+        int x, y;
+#if !defined(_DEBUG)
+        if (1)
+        {
+            set_cursor_xy(0, 0);
+        }
+#endif
+        if (!cur->drawed) goto FailExit;
+        cur_color = cur->c_row[0][0];
+        set_console_color(fv->graphics_out_fp, cur_color);
+        for (y = 0; y < cur->h; y++)
+        {
+            char *u8chr = utf8buf;
+            for (x = 0; x < cur->w; x++)
+            {
+                int new_color = cur->c_row[y][x];
+                if (new_color != cur_color)
+                {
+                    cur_color = new_color;
+                    *u8chr = '\0';
+                    fputs(utf8buf, fv->graphics_out_fp);
+                    u8chr = utf8buf;
+                    set_console_color(fv->graphics_out_fp, new_color);
+                }
+                u32toutf8(&u8chr, cur->row[y][x]);
+            }
+            *u8chr = '\0';
+            fputs(utf8buf, fv->graphics_out_fp);
+        }
+
+        fprintf(fv->graphics_out_fp, "%u\n", cur->index);
+        lock_frame(fv);
+        fv->frames = next;
+        if (!next)
+        {
+            fv->frame_last = NULL;
+        }
+        frame_delete(cur);
+        fv->precached_frame_count--;
+        fv->drawed_frame_count--;
+        unlock_frame(fv);
+    }
+    atomic_exchange(&fv->doing_output, 0);
+    return 1;
+FailExit:
+    atomic_exchange(&fv->doing_output, 0);
+    return 0;
+}
+
+static int do_decode(fontvideo_p fv, int keeprun)
+{
+    double target_timestamp = rttimer_gettime(&fv->tmr) + fv->precache_seconds;
+    int ret = 0;
+    if (!fv->tailed)
+    {
+        if (atomic_exchange(&fv->doing_decoding, 1)) return 0;
+
+        lock_frame(fv);
+        while (!fv->tailed && (
+            !fv->frame_last || (fv->frame_last && fv->frame_last->timestamp < target_timestamp) ||
+            !fv->audio_last || (fv->frame_last && fv->audio_last->timestamp < target_timestamp)))
+        {
+            unlock_frame(fv);
+            if (fv->verbose_threading)
+            {
+                fprintf(stderr, "Decoding frames. (%d)\n", get_thread_id());
+            }
+            ret = 1;
+            fv->tailed = !avdec_decode(fv->av, fv_on_get_video, fv_on_get_audio);
+            if (keeprun)
+            {
+                target_timestamp = rttimer_gettime(&fv->tmr) + fv->precache_seconds;
+            }
+            lock_frame(fv);
+        }
+        unlock_frame(fv);
+        if (fv->tailed)
+        {
+            if (fv->verbose_threading)
+            {
+                fprintf(stderr, "All frames decoded. (%d)\n", get_thread_id());
+            }
+        }
+        atomic_exchange(&fv->doing_decoding, 0);
+        return ret;
+    }
+    return ret;
+}
+
+fontvideo_p fv_create(char *input_file, FILE *log_fp, FILE *graphics_out_fp, uint32_t x_resolution, uint32_t y_resolution, double precache_seconds)
 {
     fontvideo_p fv = NULL;
+    avdec_video_format_t vf = {0};
+    avdec_audio_format_t af = {0};
+    int i;
+    int tc = omp_get_max_threads();
 
     fv = calloc(1, sizeof fv[0]);
     if (!fv) return fv;
     fv->log_fp = log_fp;
+#if defined(_DEBUG)
+    fv->verbose_threading = 1;
+#else
+    fv->verbose_threading = 0;
+#endif
+    fv->graphics_out_fp = graphics_out_fp;
 
-    if (log_fp == stdout || log_fp == stderr)
-    {
-        init_console(fv);
-    }
 
     fv->av = avdec_open(input_file, stderr);
     if (!fv->av) goto FailExit;
+    fv->av->userdata = fv;
 
-    fv->sio = siowrap_create(log_fp, SoundIoFormatFloat32NE, 48000, fv_on_write_sample);
+    fv->output_w = x_resolution;
+    fv->output_h = y_resolution;
+    fv->precache_seconds = precache_seconds;
+
+    fv->utf8buf_size = (size_t)fv->output_w * 32 + 1;
+    fv->utf8buf = malloc(fv->utf8buf_size);
+    if (!fv->utf8buf) goto FailExit;
+    if (!load_font(fv, "assets", "meta.ini")) goto FailExit;
+    if (fv->need_chcp)
+    {
+        if (log_fp == stdout || log_fp == stderr || graphics_out_fp == stdout || graphics_out_fp == stderr)
+        {
+            init_console(fv);
+        }
+    }
+
+    vf.width = x_resolution * fv->font_w;
+    vf.height = y_resolution * fv->font_h;
+    vf.pixel_format = AV_PIX_FMT_BGRA;
+    avdec_set_decoded_video_format(fv->av, &vf);
+
+    af.channel_layout = av_get_default_channel_layout(2);
+    af.sample_rate = fv->av->decoded_af.sample_rate;
+    af.sample_fmt = AV_SAMPLE_FMT_FLT;
+    af.bit_rate = (int64_t)af.sample_rate * 2 * sizeof(float);
+    avdec_set_decoded_audio_format(fv->av, &af);
+
+    rttimer_init(&fv->tmr, 1);
+
+    do_decode(fv, 0);
+    while (fv->drawed_frame_count + fv->drawing_frame_count < fv->precached_frame_count)
+    {
+#pragma omp parallel for
+        for (i = 0; i < tc; i++)
+        {
+            get_frame_and_draw(fv);
+        }
+    }
+    while (fv->drawing_frame_count);
+
+    rttimer_start(&fv->tmr);
+
+    fv->sio = siowrap_create(log_fp, SoundIoFormatFloat32NE, af.sample_rate, fv_on_write_sample);
     if (!fv->sio) goto FailExit;
-
-    fv->w = x_resolution;
-    fv->h = y_resolution;
+    fv->sio->userdata = fv;
 
     return fv;
 FailExit:
@@ -81,9 +1128,41 @@ FailExit:
     return NULL;
 }
 
-int fv_poll_show(fontvideo_p fv, FILE *graphics_out_fp)
+int fv_show(fontvideo_p fv)
 {
+    int i;
+    int tc = omp_get_max_threads();
 
+#pragma omp parallel for // ordered
+    for(i = 0; i < tc; i++)
+    {
+        if (i == 0) for (;;)
+        {
+            if (!do_decode(fv, 1))
+                yield();
+
+            if (fv->tailed) break;
+        }
+        else if (i == 1) for (;;)
+        {
+            if (fv->drawed_frame_count)
+            {
+                if (!output_drawed_video(fv, rttimer_gettime(&fv->tmr)))
+                    yield();
+            }
+
+            if (fv->tailed && !fv->precached_frame_count) break;
+        }
+        else for (;;)
+        {
+            fontvideo_frame_p f = get_frame_and_draw(fv);
+            if (!f) yield();
+
+            if (fv->tailed && fv->drawed_frame_count >= fv->precached_frame_count) break;
+        }
+
+    }
+    return 1;
 }
 
 void fv_destroy(fontvideo_p fv)
@@ -91,7 +1170,24 @@ void fv_destroy(fontvideo_p fv)
     if (!fv) return;
 
     siowrap_destroy(fv->sio);
-    avdec_close(fv->av);
+    free(fv->font_codes);
+    UB_Free(&fv->font_matrix);
+    avdec_close(&fv->av);
 
+    while (fv->frames)
+    {
+        fontvideo_frame_p next = fv->frames->next;
+        frame_delete(fv->frames);
+        fv->frames = next;
+    }
+
+    while (fv->audios)
+    {
+        fontvideo_audio_p next = fv->audios->next;
+        audio_delete(fv->audios);
+        fv->audios = next;
+    }
+
+    free(fv->utf8buf);
     free(fv);
 }
