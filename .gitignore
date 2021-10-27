@@ -7,6 +7,9 @@
 *.opensdf
 *.filters
 *.user
+*.aps
+*.pdb
+*.idb
 .vs
 msvc/.vs/
 */intermediate/
