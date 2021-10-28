@@ -268,18 +268,18 @@ static void on_audio_decoded(avdec_p av, pfn_on_get_audio on_get_audio)
             f->nb_samples, av->audio_conv_format.sample_rate, f->sample_rate, AV_ROUND_UP);
         if (!av->audio_conv_data)
         {
-            if (av_samples_alloc_array_and_samples(&av->audio_conv_data, &av->audio_conv_data_linesize,
-                av->audio_conv_channels, dst_samples, av->audio_conv_format.sample_fmt, 0) < 0) goto FailExit;
+            if (av_samples_alloc_array_and_samples(&(uint8_t **)av->audio_conv_data, &av->audio_conv_data_linesize,
+                av->audio_conv_channels, (int)dst_samples, av->audio_conv_format.sample_fmt, 0) < 0) goto FailExit;
             av->audio_conv_samples = dst_samples;
         }
         if( dst_samples > av->audio_conv_samples)
         {
             av_free(av->audio_conv_data[0]); av->audio_conv_data[0] = NULL;
-            if (av_samples_alloc(av->audio_conv_data, &av->audio_conv_data_linesize, av->audio_conv_channels,
-                dst_samples, av->audio_conv_format.sample_fmt, 1) < 0) goto FailExit;
+            if (av_samples_alloc((uint8_t **)av->audio_conv_data, &av->audio_conv_data_linesize, av->audio_conv_channels,
+                (int)dst_samples, av->audio_conv_format.sample_fmt, 1) < 0) goto FailExit;
             av->audio_conv_samples = dst_samples;
         }
-        if (swr_convert(av->audio_conv, av->audio_conv_data, dst_samples, f->data, f->nb_samples) < 0)
+        if (swr_convert(av->audio_conv, (uint8_t **)av->audio_conv_data, (int)dst_samples, f->data, f->nb_samples) < 0)
         {
             goto FailExit;
         }
