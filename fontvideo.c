@@ -7,6 +7,10 @@
 #include<omp.h>
 #include<threads.h>
 
+#if defined(_DEBUG)
+#   define DEBUG_OUTPUT_TO_SCREEN 0
+#endif
+
 #if defined(_WIN32) || defined(__MINGW32__)
 #include <Windows.h>
 
@@ -23,17 +27,21 @@ static void init_console(fontvideo_p fv)
 
 static void set_cursor_xy(int x, int y)
 {
-    COORD pos = {x, y};
+    COORD pos = {(SHORT)x, (SHORT)y};
     SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), pos);
 }
 
 static void set_console_color(FILE *con, int clr)
 {
     WORD attr = FOREGROUND_INTENSITY;
+
+    // bit order of BGR turned to RGB
+
     if (clr & 1) attr |= FOREGROUND_RED;
     if (clr & 2) attr |= FOREGROUND_GREEN;
     if (clr & 4) attr |= FOREGROUND_BLUE;
     SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), attr);
+    con;
 }
 
 static void yield()
@@ -41,13 +49,10 @@ static void yield()
     if (!SwitchToThread()) Sleep(1);
 }
 
-# if defined(_DEBUG)
-#   define DEBUG_OUTPUT_SCREEN 1
-# endif
-
-#else
+#else // For non-Win32 appliction, assume it's linux/unix and runs in terminal
 
 #define SUBDIR "/"
+
 static void init_console(fontvideo_p fv)
 {
     setlocale(LC_ALL, "");
@@ -87,41 +92,46 @@ static int get_thread_id()
     return thrd_current();
 }
 
+// For locking the frames link list of `fv->frames` and `fv->frame_last`, not for locking every individual frames
 static void lock_frame(fontvideo_p fv)
 {
-    atomic_int readout;
+    atomic_int readout = 0;
     atomic_int cur_id = get_thread_id();
-    while ((readout = atomic_exchange(&fv->frame_lock, cur_id)) != 0)
+    while (
+        // First, do a non-atomic test for a quick peek.
+        ((readout = fv->frame_lock) != 0) ||
+
+        // Then, perform the actual atomic operation for acquiring the lock.
+        ((readout = atomic_exchange(&fv->frame_lock, cur_id)) != 0))
     {
-        yield();
-        if (readout == cur_id)
-        {
-            ; // fprintf(stderr, "Recursive locked by %d.\n", cur_id);
-        }
         if (fv->verbose_threading)
         {
-            ; // fprintf(stderr, "Frame chainlist locked by %d. (%d)\n", readout, cur_id);
+            ; // fprintf(stderr, "Frame link list locked by %d. (%d)\n", readout, cur_id);
         }
+        yield();
     }
 }
 
+// Try lock, if already locked by others, immediately returns 0. If acquired the lock, returns non-zero.
 static int try_lock_frame(fontvideo_p fv)
 {
     atomic_int expected = 0;
     atomic_int cur_id = get_thread_id();
 
+    // First, do a non-atomic test for a quick peek.
+    if (fv->frame_lock) goto NotAcquired;
+
+    // Then, perform the actual atomic operation for acquiring the lock.
     if (atomic_compare_exchange_strong(&fv->frame_lock, &expected, cur_id))
     {
         return 1;
     }
-    else
+NotAcquired:
+    if (fv->verbose_threading)
     {
-        if (fv->verbose_threading)
-        {
-            fprintf(stderr, "Frame chainlist locked by %d, try lock failed. (%d)\n", expected, cur_id);
-        }
-        return 0;
+        fprintf(stderr, "Frame link list locked by %d, try lock failed. (%d)\n", expected, cur_id);
     }
+    return 0;
 }
 
 static void unlock_frame(fontvideo_p fv)
@@ -129,17 +139,18 @@ static void unlock_frame(fontvideo_p fv)
     atomic_exchange(&fv->frame_lock, 0);
 }
 
+// Same mechanism for locking audio link list.
 static void lock_audio(fontvideo_p fv)
 {
     atomic_int readout;
     atomic_int cur_id = get_thread_id();
     while ((readout = atomic_exchange(&fv->audio_lock, cur_id)) != 0)
     {
-        yield();
         if (fv->verbose_threading)
         {
-            fprintf(stderr, "Audio chainlist locked by %d. (%d)\n", readout, cur_id);
+            fprintf(stderr, "Audio link list locked by %d. (%d)\n", readout, cur_id);
         }
+        yield();
     }
 }
 
@@ -152,11 +163,11 @@ static void frame_delete(fontvideo_frame_p f)
 {
     if (!f) return;
 
-    free(f->raw_data);
+    free(f->raw_data); // RGBA pixel data
     free(f->raw_data_row);
-    free(f->data);
+    free(f->data); // Font CharCode data
     free(f->row);
-    free(f->c_data);
+    free(f->c_data); // Color data
     free(f->c_row);
 }
 
@@ -167,29 +178,41 @@ static void audio_delete(fontvideo_audio_p a)
     free(a->buffer);
 }
 
-static void *move_ptr(void *ptr, size_t step)
+// Move a pointer by bytes
+static void *move_ptr(void *ptr, ptrdiff_t step)
 {
     return (uint8_t *)ptr + step;
 }
 
+// Create audio piece and copy the waveform
 static fontvideo_audio_p audio_create(void *samples, int channel_count, size_t num_samples_per_channel, double timestamp);
 
+// Callback function for siowrap output sound to libsoundio
 static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count, void **pointers_per_channel, size_t *sample_pointer_steps, size_t samples_to_write_per_channel)
 {
     ptrdiff_t i;
     fontvideo_p fv = s->userdata;
-    float *dptr = pointers_per_channel[0];
-    float *dptr_l = dptr;
-    float *dptr_r = dptr;
-    size_t dstep = sample_pointer_steps[0];
-    size_t dstep_l = dstep;
-    size_t dstep_r = dstep;
+
+    // Destination pointer
+    float *dptr = pointers_per_channel[0]; // Mono
+    float *dptr_l = dptr; // Stereo left
+    float *dptr_r = dptr; // Stereo right
+
+    // Destination step length, by **BYTES**
+    size_t dstep = sample_pointer_steps[0]; // Mono
+    size_t dstep_l = dstep; // Stereo left
+    size_t dstep_r = dstep; // Stereo right
+
+    // Total frames written. One sample for every channel is a frame.
     size_t total = 0;
 
+    // Only support for mono and stereo
     if (channel_count < 1 || channel_count > 2) return 0;
 
+    // Supress warning
     sample_rate;
 
+    // Initialize stereo pointers
     if (channel_count == 2)
     {
         dptr_l = dptr;
@@ -198,18 +221,24 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
         dstep_r = sample_pointer_steps[1];
     }
 
+    // Because the next operations will change the audio link list, so lock it up.
     lock_audio(fv);
     while (fv->audios)
     {
+        // Next audio piece in the link list
         fontvideo_audio_p next = fv->audios->next;
-        float *sptr = fv->audios->buffer;
-        float *sptr_l = fv->audios->ptr_left;
-        float *sptr_r = fv->audios->ptr_right;
-        size_t sstep = 1;
-        size_t sstep_l = fv->audios->step_left;
-        size_t sstep_r = fv->audios->step_right;
-        ptrdiff_t writable = fv->audios->frames;
-        size_t wrote = 0;
+
+        // Source pointer
+        float *sptr = fv->audios->buffer; // Mono
+        float *sptr_l = fv->audios->ptr_left; // Stereo left
+        float *sptr_r = fv->audios->ptr_right; // Stereo right
+
+        // Source step length, by **SAMPLES**
+        size_t sstep = 1; // Mono
+        size_t sstep_l = fv->audios->step_left; // Stereo left
+        size_t sstep_r = fv->audios->step_right; // Stereo right
+        ptrdiff_t writable = fv->audios->frames; // Source frames
+        size_t wrote = 0; // Total frames wrote
         if ((size_t)writable > samples_to_write_per_channel - total) writable = (ptrdiff_t)(samples_to_write_per_channel - total);
         if (!writable) break;
         switch (channel_count)
@@ -217,7 +246,10 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
         case 1:
             for (i = 0; i < writable; i++)
             {
+                // Copy samples
                 dptr[0] = sptr[0];
+
+                // Move pointers
                 dptr = move_ptr(dptr, dstep);
                 sptr += sstep;
             }
@@ -227,8 +259,11 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
         case 2:
             for (i = 0; i < writable; i++)
             {
+                // Copy samples
                 dptr_l[0] = sptr_l[0];
                 dptr_r[0] = sptr_r[0];
+
+                // Move pointers
                 dptr_l = move_ptr(dptr_l, dstep_l);
                 dptr_r = move_ptr(dptr_r, dstep_r);
                 sptr_l += sstep_l;
@@ -243,21 +278,36 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
             audio_delete(fv->audios);
             fv->audios = next;
         }
-        else
+        else // If the current audio piece is not all written, reserve the rest of the frames for the next callback.
         {
             size_t rest = fv->audios->frames - wrote;
             fontvideo_audio_p replace;
+
+            // Reserve the rest of the frames
             replace = audio_create(&fv->audios->buffer[wrote * channel_count], channel_count, rest, fv->audios->timestamp);
+
+            // Insert into the link list
             replace->next = next;
             next = fv->audios;
             fv->audios = replace;
+
+            // Delete the current piece
             audio_delete(next);
+
+            // Done writing audio
             break;
         }
     }
+
+    // If all audio pieces is written, fill the rest of the buffer to silence
     if (!fv->audios)
     {
         fv->audio_last = NULL;
+
+        // No need to keep the lock, release ASAP
+        unlock_audio(fv);
+
+        // Check if the buffer isn't all filled, then fill if not.
         if (total < samples_to_write_per_channel)
         {
             ptrdiff_t writable = samples_to_write_per_channel - total;
@@ -284,10 +334,16 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
             }
         }
     }
-    unlock_audio(fv);
+    else
+    {
+        // Make sure the link list is unlocked properly.
+        unlock_audio(fv);
+    }
     return total;
 }
 
+// Convert 32-bit unicode into UTF-8 form one by one.
+// The UTF-8 output string pointer will be moved to the next position.
 static void u32toutf8
 (
     char **ppUTF8,
@@ -296,7 +352,6 @@ static void u32toutf8
 {
     char *pUTF8 = ppUTF8[0];
 
-    //Êä³öUTF-8±àÂëµÄ×Ö·û´®
     if (CharCode >= 0x4000000)
     {
         *pUTF8++ = 0xFC | ((CharCode >> 30) & 0x01);
@@ -336,9 +391,13 @@ static void u32toutf8
     {
         *pUTF8++ = (char)CharCode;
     }
+
+    // Move the pointer
     ppUTF8[0] = pUTF8;
 }
 
+// Convert UTF-8 character into 32-bit unicode.
+// The UTF-8 string pointer will be moved to the next position.
 static uint32_t utf8tou32char
 (
     char **ppUTF8
@@ -348,9 +407,10 @@ static uint32_t utf8tou32char
     uint32_t ret = 0;
     char *pUTF8 = ppUTF8[0];
 
+    // Detect the available room size of the UTF-8 buffer
     while (cb < 6 && pUTF8[cb]) cb++;
 
-    if ((pUTF8[0] & 0xFE) == 0xFC)//1111110x
+    if ((pUTF8[0] & 0xFE) == 0xFC) // 1111110x
     {
         if (6 <= cb)
         {
@@ -367,7 +427,7 @@ static uint32_t utf8tou32char
         else
             goto FailExit;
     }
-    else if ((pUTF8[0] & 0xFC) == 0xF8)//111110xx
+    else if ((pUTF8[0] & 0xFC) == 0xF8) // 111110xx
     {
         if (5 <= cb)
         {
@@ -383,7 +443,7 @@ static uint32_t utf8tou32char
         else
             goto FailExit;
     }
-    else if ((pUTF8[0] & 0xF8) == 0xF0)//11110xxx
+    else if ((pUTF8[0] & 0xF8) == 0xF0) // 11110xxx
     {
         if (4 <= cb)
         {
@@ -398,7 +458,7 @@ static uint32_t utf8tou32char
         else
             goto FailExit;
     }
-    else if ((pUTF8[0] & 0xF0) == 0xE0)//1110xxxx
+    else if ((pUTF8[0] & 0xF0) == 0xE0) // 1110xxxx
     {
         if (3 <= cb)
         {
@@ -412,7 +472,7 @@ static uint32_t utf8tou32char
         else
             goto FailExit;
     }
-    else if ((pUTF8[0] & 0xE0) == 0xC0)//110xxxxx
+    else if ((pUTF8[0] & 0xE0) == 0xC0) // 110xxxxx
     {
         if (2 <= cb)
         {
@@ -425,20 +485,24 @@ static uint32_t utf8tou32char
         else
             goto FailExit;
     }
-    else if ((pUTF8[0] & 0xC0) == 0x80)//10xxxxxx
+    else if ((pUTF8[0] & 0xC0) == 0x80) // 10xxxxxx
     {
+        // Wrong encode
         goto FailExit;
     }
-    else if ((pUTF8[0] & 0x80) == 0x00)//0xxxxxxx
+    else if ((pUTF8[0] & 0x80) == 0x00) // 0xxxxxxx
     {
         ret = pUTF8[0] & 0x7F;
         ppUTF8[0] = &pUTF8[1];
         return ret;
     }
+    return ret;
 FailExit:
+    // If convert failed, null-char will be returned.
     return ret;
 }
 
+// Load font metadata and config
 static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
 {
     char buf[4096];
@@ -456,10 +520,10 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
     uint32_t code;
 
     snprintf(buf, sizeof buf, "%s"SUBDIR"%s", assets_dir, meta_file);
-    d_meta = dictcfg_load(buf, log_fp);
+    d_meta = dictcfg_load(buf, log_fp); // Parse ini file
     if (!d_meta) goto FailExit;
 
-    d_font = dictcfg_section(d_meta, "[font]");
+    d_font = dictcfg_section(d_meta, "[font]"); // Extract section
     if (!d_font) goto FailExit;
 
     font_bmp = dictcfg_getstr(d_font, "font_bmp", "font.bmp");
@@ -482,6 +546,7 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
         goto FailExit;
     }
 
+    // Font matrix dimension
     fv->font_mat_w = fv->font_matrix->Width / fv->font_w;
     fv->font_mat_h = fv->font_matrix->Height / fv->font_h;
 
@@ -493,7 +558,7 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
         goto FailExit;
     }
     fseek(fp_code, 0, SEEK_END);
-    font_raw_code_size = ftell(fp_code);
+    font_raw_code_size = ftell(fp_code); // Not expect the code file to be too large, no need for fgetpos()
     fseek(fp_code, 0, SEEK_SET);
     font_raw_code = malloc(font_raw_code_size + 1);
     if (!font_raw_code)
@@ -509,12 +574,17 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
     }
     fclose(fp_code); fp_code = NULL;
 
+    // Try parse the UTF-8 code file into 32-bit unicode string
     ch = font_raw_code;
     do
     {
         code = utf8tou32char(&ch);
         if (!code) break;
+
+        // If none of the char code is above 127, it's not needed to tell the terminal to use UTF-8 encoding.
         if (code > 127) fv->need_chcp = 1;
+
+        // If the count of the codes is not as described in the ini file, then do buffer expansion and continue to read all codes.
         if (i >= font_count_max)
         {
             size_t new_size = i * 3 / 2 + 1;
@@ -530,6 +600,7 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
         fv->font_codes[i++] = code;
     } while (code);
 
+    // Do trim excess to the buffer
     if (i != fv->font_code_count)
     {
         uint32_t *new_ptr = realloc(fv->font_codes, i * sizeof fv->font_codes[0]);
@@ -549,6 +620,7 @@ FailExit:
     return 0;
 }
 
+// Create a frame, create buffers, copy the source bitmap, preparing for the rendering
 static fontvideo_frame_p frame_create(fontvideo_p fv, uint32_t w, uint32_t h, double timestamp, void *bitmap, int bmp_width, int bmp_height, size_t bmp_pitch)
 {
     ptrdiff_t i;
@@ -559,26 +631,29 @@ static fontvideo_frame_p frame_create(fontvideo_p fv, uint32_t w, uint32_t h, do
     f->timestamp = timestamp;
     f->w = w;
     f->h = h;
-    f->data = calloc(w * h, sizeof f->data[0]);
-    if (!f->data) goto FailExit;
-    f->row = malloc(h * sizeof f->row[0]);
-    if (!f->row) goto FailExit;
-    f->c_data = malloc((size_t)w * h);
-    if (!f->c_data) goto FailExit;
-    f->c_row = malloc(h * sizeof f->c_row[0]);
-    if (!f->c_row) goto FailExit;
+
+    // Char code buffer
+    f->data = calloc(w * h, sizeof f->data[0]); if (!f->data) goto FailExit;
+    f->row = malloc(h * sizeof f->row[0]); if (!f->row) goto FailExit;
+
+    // Char color buffer
+    f->c_data = malloc((size_t)w * h); if (!f->c_data) goto FailExit;
+    f->c_row = malloc(h * sizeof f->c_row[0]); if (!f->c_row) goto FailExit;
+
+    // Create row pointers for faster access to the matrix slots
     for (i = 0; i < (ptrdiff_t)h; i++)
     {
         f->row[i] = &f->data[i * w];
         f->c_row[i] = &f->c_data[i * w];
     }
 
+    // Source bitmap buffer
     f->raw_w = bmp_width;
     f->raw_h = bmp_height;
-    f->raw_data = malloc(bmp_pitch * bmp_height);
-    if (!f->raw_data) goto FailExit;
-    f->raw_data_row = malloc(bmp_height * sizeof f->raw_data_row[0]);
-    if (!f->raw_data_row) goto FailExit;
+    f->raw_data = malloc(bmp_pitch * bmp_height); if (!f->raw_data) goto FailExit;
+    f->raw_data_row = malloc(bmp_height * sizeof f->raw_data_row[0]); if (!f->raw_data_row) goto FailExit;
+
+    // Copy the source bitmap whilst creating row pointers.
 #pragma omp parallel for
     for (i = 0; i < (ptrdiff_t)bmp_height; i++)
     {
@@ -592,17 +667,19 @@ FailExit:
     return NULL;
 }
 
-static void draw_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
+// Render the frame from bitmap into font char codes. One of the magic happens here.
+static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
 {
     int fy, fw, fh;
     UniformBitmap_p fm = fv->font_matrix;
-    size_t f_pixel_count = fv->font_w * fv->font_h;
+    uint32_t font_pixel_count = fv->font_w * fv->font_h;
 
-    if (f->drawed) return;
+    if (f->rendered) return;
 
     fw = f->w;
     fh = f->h;
 
+    // OpenMP will automatically disable recursive multi-threading
 #pragma omp parallel for
     for (fy = 0; fy < fh; fy++)
     {
@@ -619,6 +696,7 @@ static void draw_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
             float best_score = -9999999.0f;
             sx = fx * fv->font_w;
 
+            // Replace the rightmost char to newline
             if (fx == fw - 1)
             {
                 f->row[fy][fx] = '\n';
@@ -646,10 +724,10 @@ static void draw_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
                                 uint32_t u32;
                             }   *src_pixel = (void *)&(f->raw_data_row[sy + y][sx + x]),
                                 *font_pixel = (void *)&(fm->RowPointers[fm->Height - 1 - (srcy + y)][srcx + x]);
-                            float src_lum = sqrtf(
+                            float src_lum = sqrtf((float)(
                                 (uint32_t)src_pixel->u8[0] * src_pixel->u8[0] +
                                 (uint32_t)src_pixel->u8[1] * src_pixel->u8[1] +
-                                (uint32_t)src_pixel->u8[2] * src_pixel->u8[2]) / 441.672955930063709849498817084f;
+                                (uint32_t)src_pixel->u8[2] * src_pixel->u8[2])) / 441.672955930063709849498817084f;
                             float font_lum = font_pixel->u8[0] ? 1.0f : 0.0f;
 
                             // font_lum -= 0.5;
@@ -660,8 +738,8 @@ static void draw_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
                         }
                     }
 
-                    if (font_normalize >= 0.000001f)
-                    score /= sqrtf(font_normalize);
+                    // Do vector normalize
+                    if (font_normalize >= 0.000001f) score /= sqrtf(font_normalize);
                     if (score > best_score)
                     {
                         best_score = score;
@@ -675,6 +753,10 @@ static void draw_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
                 }
             }
 
+            // The best matching char code
+            f->row[fy][fx] = fv->font_codes[best_code_index];
+
+            // Get the average color of the char
             for (y = 0; y < (int)fv->font_h; y++)
             {
                 for (x = 0; x < (int)fv->font_w; x++)
@@ -691,11 +773,11 @@ static void draw_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
                 }
             }
 
-            avr_b /= f_pixel_count;
-            avr_g /= f_pixel_count;
-            avr_r /= f_pixel_count;
+            avr_b /= font_pixel_count;
+            avr_g /= font_pixel_count;
+            avr_r /= font_pixel_count;
 
-            f->row[fy][fx] = fv->font_codes[best_code_index];
+            // Encode the color into 3-bit BGR
             f->c_row[fy][fx] =
                 ((avr_b & 0x80) >> 5) |
                 ((avr_g & 0x80) >> 6) |
@@ -703,10 +785,11 @@ static void draw_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
         }
     }
 
-    atomic_exchange(&f->drawed, get_thread_id());
+    // Finished rendering, update statistics
+    atomic_exchange(&f->rendered, get_thread_id());
     lock_frame(fv);
-    fv->drawed_frame_count++;
-    fv->drawing_frame_count--;
+    fv->rendered_frame_count++;
+    fv->rendering_frame_count--;
     unlock_frame(fv);
 
 #ifdef DEBUG_OUTPUT_SCREEN
@@ -733,6 +816,8 @@ static void draw_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
     // free(f->raw_data_row); f->raw_data_row = NULL;
 }
 
+// Lock the link list of the frames, insert the frame into the link list, preserve the ordering.
+// The link list of the frames is the cached frames to be rendered.
 static void locked_add_frame_to_fv(fontvideo_p fv, fontvideo_frame_p f)
 {
     double timestamp;
@@ -780,6 +865,7 @@ Unlock:
     unlock_frame(fv);
 }
 
+// Create the audio 
 static fontvideo_audio_p audio_create(void *samples, int channel_count, size_t num_samples_per_channel, double timestamp)
 {
     fontvideo_audio_p a = NULL;
@@ -901,12 +987,12 @@ static void fv_on_get_audio(avdec_p av, void **samples_of_channel, int channel_c
     // printf("Get audio data: %p, %d, %zu, %lf, %d\n", samples_of_channel, channel_count, num_samples_per_channel, timestamp, sample_fmt);
 }
 
-static fontvideo_frame_p get_frame_and_draw(fontvideo_p fv)
+static fontvideo_frame_p get_frame_and_render(fontvideo_p fv)
 {
     fontvideo_frame_p f = NULL;
     if (!fv->frames) return NULL;
     lock_frame(fv);
-    if (fv->precached_frame_count <= fv->drawed_frame_count + fv->drawing_frame_count)
+    if (fv->precached_frame_count <= fv->rendered_frame_count + fv->rendering_frame_count)
     {
         unlock_frame(fv);
         return NULL;
@@ -916,28 +1002,28 @@ static fontvideo_frame_p get_frame_and_draw(fontvideo_p fv)
     while (f)
     {
         atomic_int expected = 0;
-        if (f->drawed)
+        if (f->rendered)
         {
             f = f->next;
             continue;
         }
-        if (atomic_compare_exchange_strong(&f->drawing, &expected, get_thread_id()))
+        if (atomic_compare_exchange_strong(&f->rendering, &expected, get_thread_id()))
         {
             lock_frame(fv);
-            fv->drawing_frame_count++;
+            fv->rendering_frame_count++;
             unlock_frame(fv);
             
-            // True, not drawing, set it as drawing, then draw.
+            // True, not rendering, set it as rendering, then render.
             if (fv->verbose_threading)
             {
-                fprintf(stderr, "Got frame to draw. (%d)\n", get_thread_id());
+                fprintf(stderr, "Got frame to render. (%d)\n", get_thread_id());
             }
-            draw_frame_from_rgbabitmap(fv, f);
+            render_frame_from_rgbabitmap(fv, f);
             break;
         }
         else
         {
-            // This one is occupied and perform drawing.
+            // This one is occupied and perform rendering.
             f = f->next;
             continue;
         }
@@ -945,15 +1031,14 @@ static fontvideo_frame_p get_frame_and_draw(fontvideo_p fv)
     return f;
 }
 
-static int output_drawed_video(fontvideo_p fv, double timestamp)
+static int output_rendered_video(fontvideo_p fv, double timestamp)
 {
     char* utf8buf = fv->utf8buf;
-    size_t utf8buf_count;
     fontvideo_frame_p cur = NULL;
     int cur_color = 0;
 
     if (!fv->frames) return 0;
-    if (!fv->drawed_frame_count) return 0;
+    if (!fv->rendered_frame_count) return 0;
 
     if (atomic_exchange(&fv->doing_output, 1)) return 0;
 
@@ -971,13 +1056,13 @@ static int output_drawed_video(fontvideo_p fv, double timestamp)
             set_cursor_xy(0, 0);
         }
 #endif
-        if (!cur->drawed) goto FailExit;
+        if (!cur->rendered) goto FailExit;
         cur_color = cur->c_row[0][0];
         set_console_color(fv->graphics_out_fp, cur_color);
-        for (y = 0; y < cur->h; y++)
+        for (y = 0; y < (int)cur->h; y++)
         {
             char *u8chr = utf8buf;
-            for (x = 0; x < cur->w; x++)
+            for (x = 0; x < (int)cur->w; x++)
             {
                 int new_color = cur->c_row[y][x];
                 if (new_color != cur_color)
@@ -1003,7 +1088,7 @@ static int output_drawed_video(fontvideo_p fv, double timestamp)
         }
         frame_delete(cur);
         fv->precached_frame_count--;
-        fv->drawed_frame_count--;
+        fv->rendered_frame_count--;
         unlock_frame(fv);
     }
     atomic_exchange(&fv->doing_output, 0);
@@ -1106,15 +1191,15 @@ fontvideo_p fv_create(char *input_file, FILE *log_fp, FILE *graphics_out_fp, uin
     rttimer_init(&fv->tmr, 1);
 
     do_decode(fv, 0);
-    while (fv->drawed_frame_count + fv->drawing_frame_count < fv->precached_frame_count)
+    while (fv->rendered_frame_count + fv->rendering_frame_count < fv->precached_frame_count)
     {
 #pragma omp parallel for
         for (i = 0; i < tc; i++)
         {
-            get_frame_and_draw(fv);
+            get_frame_and_render(fv);
         }
     }
-    while (fv->drawing_frame_count);
+    while (fv->rendering_frame_count);
 
     rttimer_start(&fv->tmr);
 
@@ -1145,9 +1230,9 @@ int fv_show(fontvideo_p fv)
         }
         else if (i == 1) for (;;)
         {
-            if (fv->drawed_frame_count)
+            if (fv->rendered_frame_count)
             {
-                if (!output_drawed_video(fv, rttimer_gettime(&fv->tmr)))
+                if (!output_rendered_video(fv, rttimer_gettime(&fv->tmr)))
                     yield();
             }
 
@@ -1155,10 +1240,10 @@ int fv_show(fontvideo_p fv)
         }
         else for (;;)
         {
-            fontvideo_frame_p f = get_frame_and_draw(fv);
+            fontvideo_frame_p f = get_frame_and_render(fv);
             if (!f) yield();
 
-            if (fv->tailed && fv->drawed_frame_count >= fv->precached_frame_count) break;
+            if (fv->tailed && fv->rendered_frame_count >= fv->precached_frame_count) break;
         }
 
     }
