@@ -10,6 +10,7 @@
 #include<libswscale/swscale.h>
 #include<libswresample/swresample.h>
 
+// Pixel format descriptor for video frames
 typedef struct avdec_video_format_struct
 {
     int width;
@@ -17,6 +18,7 @@ typedef struct avdec_video_format_struct
     enum AVPixelFormat pixel_format;
 }avdec_video_format_t, *avdec_video_format_p;
 
+// Audio format descriptor for audio waveform
 typedef struct avdec_audio_format_struct
 {
     uint64_t channel_layout;
