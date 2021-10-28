@@ -15,8 +15,8 @@ struct fontvideo_frame_struct
 {
     double timestamp;
     uint32_t index;
-    atomic_int drawing;
-    atomic_int drawed;
+    atomic_int rendering;
+    atomic_int rendered;
 
     uint32_t w, h;
     uint32_t *data;
@@ -70,8 +70,8 @@ typedef struct fontvideo_struct
     atomic_int audio_lock;
     uint32_t frame_count;
     uint32_t precached_frame_count;
-    uint32_t drawing_frame_count;
-    uint32_t drawed_frame_count;
+    uint32_t rendering_frame_count;
+    uint32_t rendered_frame_count;
 
     char *utf8buf;
     size_t utf8buf_size;
