@@ -17,6 +17,8 @@ struct fontvideo_frame_struct
     uint32_t index;
     atomic_int rendering;
     atomic_int rendered;
+    double rendering_start_time;
+    double rendering_time_consuming;
 
     uint32_t w, h;
     uint32_t *data;
@@ -50,8 +52,14 @@ typedef struct fontvideo_struct
     FILE *graphics_out_fp;
     int output_utf8;
     int need_chcp;
+    double precache_seconds;
     int verbose;
     int verbose_threading;
+    int real_time_play;
+    int do_audio_output;
+    int do_colored_output;
+    uint32_t output_w, output_h;
+    double avg_rendering_time_consuming;
 
     uint32_t font_w, font_h;
     UniformBitmap_p font_matrix;
@@ -60,8 +68,6 @@ typedef struct fontvideo_struct
     size_t font_code_count;
     uint32_t *font_codes;
 
-    double precache_seconds;
-    uint32_t output_w, output_h;
     fontvideo_frame_p frames;
     fontvideo_frame_p frame_last;
     atomic_int frame_lock;
@@ -84,8 +90,9 @@ typedef struct fontvideo_struct
     rttimer_t tmr;
 }fontvideo_t, *fontvideo_p;
 
-fontvideo_p fv_create(char *input_file, FILE *log_fp, FILE *graphics_out_fp, uint32_t x_resolution, uint32_t y_resolution, double precache_seconds);
+fontvideo_p fv_create(char *input_file, FILE *log_fp, int do_verbose_log, FILE *graphics_out_fp, uint32_t x_resolution, uint32_t y_resolution, double precache_seconds, int do_audio_output);
 int fv_show(fontvideo_p fv);
+int fv_render(fontvideo_p fv);
 void fv_destroy(fontvideo_p fv);
 
 #endif
