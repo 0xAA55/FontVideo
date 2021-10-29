@@ -60,6 +60,8 @@ avdec_p avdec_open(char *path, FILE *log_fp)
             av->audio_stream = stream;
             av->audio_index = stream->index;
             break;
+        default:
+            break;
         }
     }
 
@@ -199,10 +201,7 @@ FailExit:
 
 int avdec_set_decoded_audio_format(avdec_p av, avdec_audio_format_p af)
 {
-    AVCodecContext *ctx = NULL;
-
     if (!av || !af || !av->audio_codec_context) return 0;
-    ctx = av->audio_codec_context;
 
     swr_free(&av->audio_conv);
     if (av->audio_conv_data)
@@ -245,7 +244,7 @@ static void on_video_decoded(avdec_p av, pfn_on_get_video on_get_video)
 {
     FILE *log_fp = av->log_fp;
     AVFrame *f = av->frame;
-    double time_position = (double)f->best_effort_timestamp * av_q2d(av->video_stream->time_base);;
+    double time_position = (double)f->best_effort_timestamp * av_q2d(av->video_stream->time_base);
     if (av->video_conv)
     {
         if (!sws_scale_frame(av->video_conv, av->video_conv_frame, av->frame))
@@ -268,7 +267,7 @@ static void on_audio_decoded(avdec_p av, pfn_on_get_audio on_get_audio)
             f->nb_samples, av->audio_conv_format.sample_rate, f->sample_rate, AV_ROUND_UP);
         if (!av->audio_conv_data)
         {
-            if (av_samples_alloc_array_and_samples(&(uint8_t **)av->audio_conv_data, &av->audio_conv_data_linesize,
+            if (av_samples_alloc_array_and_samples((uint8_t ***)&av->audio_conv_data, &av->audio_conv_data_linesize,
                 av->audio_conv_channels, (int)dst_samples, av->audio_conv_format.sample_fmt, 0) < 0) goto FailExit;
             av->audio_conv_samples = dst_samples;
         }
@@ -279,7 +278,7 @@ static void on_audio_decoded(avdec_p av, pfn_on_get_audio on_get_audio)
                 (int)dst_samples, av->audio_conv_format.sample_fmt, 1) < 0) goto FailExit;
             av->audio_conv_samples = dst_samples;
         }
-        if (swr_convert(av->audio_conv, (uint8_t **)av->audio_conv_data, (int)dst_samples, f->data, f->nb_samples) < 0)
+        if (swr_convert(av->audio_conv, (uint8_t **)av->audio_conv_data, (int)dst_samples, (const uint8_t**)f->data, f->nb_samples) < 0)
         {
             goto FailExit;
         }
@@ -287,7 +286,7 @@ static void on_audio_decoded(avdec_p av, pfn_on_get_audio on_get_audio)
     }
     else
     {
-        on_get_audio(av, f->data, f->channels, f->nb_samples, time_position, f->format);
+        on_get_audio(av, (void **)f->data, f->channels, f->nb_samples, time_position, f->format);
     }
     return;
 FailExit:
@@ -301,7 +300,7 @@ int avdec_decode(avdec_p av, pfn_on_get_video on_get_video, pfn_on_get_audio on_
     int frame_received = 0;
     int rv;
 
-    if (!av || !on_get_video || !on_get_audio) return 0;
+    if (!av) return 0;
 
     log_fp = av->log_fp;
     while (!frame_received)
@@ -333,7 +332,7 @@ int avdec_decode(avdec_p av, pfn_on_get_video on_get_video, pfn_on_get_audio on_
                     rv = avcodec_receive_frame(av->video_codec_context, av->frame);
                     if (!rv)
                     {
-                        on_video_decoded(av, on_get_video);
+                        if (on_get_video) on_video_decoded(av, on_get_video);
                         frame_received = 1;
                     }
                     else break;
@@ -351,7 +350,7 @@ int avdec_decode(avdec_p av, pfn_on_get_video on_get_video, pfn_on_get_audio on_
                     rv = avcodec_receive_frame(av->audio_codec_context, av->frame);
                     if (!rv)
                     {
-                        on_audio_decoded(av, on_get_audio);
+                        if (on_get_audio) on_audio_decoded(av, on_get_audio);
                         frame_received = 1;
                     }
                     else break;
@@ -372,7 +371,7 @@ int avdec_decode(avdec_p av, pfn_on_get_video on_get_video, pfn_on_get_audio on_
                     rv = avcodec_receive_frame(av->video_codec_context, av->frame);
                     if (!rv)
                     {
-                        on_video_decoded(av, on_get_video);
+                        if (on_get_video) on_video_decoded(av, on_get_video);
                         frame_received = 1;
                     }
                     else break;
@@ -390,7 +389,7 @@ int avdec_decode(avdec_p av, pfn_on_get_video on_get_video, pfn_on_get_audio on_
                     rv = avcodec_receive_frame(av->audio_codec_context, av->frame);
                     if (!rv)
                     {
-                        on_audio_decoded(av, on_get_audio);
+                        if (on_get_audio) on_audio_decoded(av, on_get_audio);
                         frame_received = 1;
                     }
                     else break;
