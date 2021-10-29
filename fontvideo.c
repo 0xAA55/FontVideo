@@ -679,6 +679,8 @@ static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
     fw = f->w;
     fh = f->h;
 
+    f->rendering_start_time = rttimer_gettime(&fv->tmr);
+
     // OpenMP will automatically disable recursive multi-threading
 #pragma omp parallel for
     for (fy = 0; fy < fh; fy++)
@@ -784,6 +786,8 @@ static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
                 ((avr_r & 0x80) >> 7);
         }
     }
+
+    f->rendering_time_consuming = rttimer_gettime(&fv->tmr) - f->rendering_start_time;
 
     // Finished rendering, update statistics
     atomic_exchange(&f->rendered, get_thread_id());
@@ -976,7 +980,11 @@ static void fv_on_get_video(avdec_p av, void *bitmap, int width, int height, siz
 static void fv_on_get_audio(avdec_p av, void **samples_of_channel, int channel_count, size_t num_samples_per_channel, double timestamp, enum AVSampleFormat sample_fmt)
 {
     fontvideo_p fv = av->userdata;
-    fontvideo_audio_p a = audio_create(samples_of_channel[0], channel_count, num_samples_per_channel, timestamp);
+    fontvideo_audio_p a = NULL;
+
+    if (!fv->do_audio_output) return;
+    
+    a = audio_create(samples_of_channel[0], channel_count, num_samples_per_channel, timestamp);
     if (!a)
     {
         return;
@@ -989,7 +997,7 @@ static void fv_on_get_audio(avdec_p av, void **samples_of_channel, int channel_c
 
 static fontvideo_frame_p get_frame_and_render(fontvideo_p fv)
 {
-    fontvideo_frame_p f = NULL;
+    fontvideo_frame_p f = NULL, prev = NULL;
     if (!fv->frames) return NULL;
     lock_frame(fv);
     if (fv->precached_frame_count <= fv->rendered_frame_count + fv->rendering_frame_count)
@@ -998,36 +1006,69 @@ static fontvideo_frame_p get_frame_and_render(fontvideo_p fv)
         return NULL;
     }
     f = fv->frames;
-    unlock_frame(fv);
     while (f)
     {
         atomic_int expected = 0;
         if (f->rendered)
         {
+            prev = f;
             f = f->next;
             continue;
         }
         if (atomic_compare_exchange_strong(&f->rendering, &expected, get_thread_id()))
         {
-            lock_frame(fv);
-            fv->rendering_frame_count++;
-            unlock_frame(fv);
-            
-            // True, not rendering, set it as rendering, then render.
-            if (fv->verbose_threading)
+            // If the frame isn't being rendered, first detect if it's too late to render it, then do frame skipping.
+            if (fv->real_time_play && rttimer_gettime(&fv->tmr) > f->timestamp)
             {
-                fprintf(stderr, "Got frame to render. (%d)\n", get_thread_id());
+                // Too late to render the frame, skip it.
+                fontvideo_frame_p next = f->next;
+                if (!prev)
+                {
+                    assert(f == fv->frames);
+                    fv->frames = next;
+                    if (!next)
+                    {
+                        fv->frame_last = NULL;
+                        unlock_frame(fv);
+                        return NULL;
+                    }
+                    else
+                    {
+                        frame_delete(f);
+                        f = fv->frames = next;
+                        continue;
+                    }
+                }
+                else
+                {
+                    prev->next = next;
+                    frame_delete(f);
+                    f = next;
+                    continue;
+                }
             }
-            render_frame_from_rgbabitmap(fv, f);
-            break;
+            else
+            {
+                fv->rendering_frame_count++;
+
+                if (fv->verbose_threading)
+                {
+                    fprintf(stderr, "Got frame to render. (%d)\n", get_thread_id());
+                }
+                unlock_frame(fv);
+                render_frame_from_rgbabitmap(fv, f);
+                return f;
+            }
         }
         else
         {
             // This one is occupied and perform rendering.
+            prev = f;
             f = f->next;
             continue;
         }
     }
+    unlock_frame(fv);
     return f;
 }
 
@@ -1046,7 +1087,7 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
     cur = fv->frames;
     unlock_frame(fv);
     if (!cur) goto FailExit;
-    if (timestamp >= cur->timestamp)
+    if (timestamp < 0 || timestamp >= cur->timestamp || !fv->real_time_play)
     {
         fontvideo_frame_p next = cur->next;
         int x, y;
@@ -1057,26 +1098,42 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
         }
 #endif
         if (!cur->rendered) goto FailExit;
-        cur_color = cur->c_row[0][0];
-        set_console_color(fv->graphics_out_fp, cur_color);
-        for (y = 0; y < (int)cur->h; y++)
+        if (fv->do_colored_output)
         {
-            char *u8chr = utf8buf;
-            for (x = 0; x < (int)cur->w; x++)
+            cur_color = cur->c_row[0][0];
+            set_console_color(fv->graphics_out_fp, cur_color);
+            for (y = 0; y < (int)cur->h; y++)
             {
-                int new_color = cur->c_row[y][x];
-                if (new_color != cur_color)
+                char *u8chr = utf8buf;
+                for (x = 0; x < (int)cur->w; x++)
                 {
-                    cur_color = new_color;
-                    *u8chr = '\0';
-                    fputs(utf8buf, fv->graphics_out_fp);
-                    u8chr = utf8buf;
-                    set_console_color(fv->graphics_out_fp, new_color);
+                    int new_color = cur->c_row[y][x];
+                    if (new_color != cur_color)
+                    {
+                        cur_color = new_color;
+                        *u8chr = '\0';
+                        fputs(utf8buf, fv->graphics_out_fp);
+                        u8chr = utf8buf;
+                        set_console_color(fv->graphics_out_fp, new_color);
+                    }
+                    u32toutf8(&u8chr, cur->row[y][x]);
                 }
-                u32toutf8(&u8chr, cur->row[y][x]);
+                *u8chr = '\0';
+                fputs(utf8buf, fv->graphics_out_fp);
             }
-            *u8chr = '\0';
-            fputs(utf8buf, fv->graphics_out_fp);
+        }
+        else
+        {
+            for (y = 0; y < (int)cur->h; y++)
+            {
+                char *u8chr = utf8buf;
+                for (x = 0; x < (int)cur->w; x++)
+                {
+                    u32toutf8(&u8chr, cur->row[y][x]);
+                }
+                *u8chr = '\0';
+                fputs(utf8buf, fv->graphics_out_fp);
+            }
         }
 
         fprintf(fv->graphics_out_fp, "%u\n", cur->index);
@@ -1138,7 +1195,7 @@ static int do_decode(fontvideo_p fv, int keeprun)
     return ret;
 }
 
-fontvideo_p fv_create(char *input_file, FILE *log_fp, FILE *graphics_out_fp, uint32_t x_resolution, uint32_t y_resolution, double precache_seconds)
+fontvideo_p fv_create(char *input_file, FILE *log_fp, int do_verbose_log, FILE *graphics_out_fp, uint32_t x_resolution, uint32_t y_resolution, double precache_seconds, int do_audio_output)
 {
     fontvideo_p fv = NULL;
     avdec_video_format_t vf = {0};
@@ -1149,13 +1206,20 @@ fontvideo_p fv_create(char *input_file, FILE *log_fp, FILE *graphics_out_fp, uin
     fv = calloc(1, sizeof fv[0]);
     if (!fv) return fv;
     fv->log_fp = log_fp;
+    fv->verbose = do_verbose_log;
 #if defined(_DEBUG)
     fv->verbose_threading = 1;
 #else
     fv->verbose_threading = 0;
 #endif
     fv->graphics_out_fp = graphics_out_fp;
+    fv->do_audio_output = do_audio_output;
 
+    if (log_fp == stdout || log_fp == stderr || graphics_out_fp == stdout || graphics_out_fp == stderr)
+    {
+        fv->do_colored_output = 1;
+        fv->real_time_play = 1;
+    }
 
     fv->av = avdec_open(input_file, stderr);
     if (!fv->av) goto FailExit;
@@ -1171,7 +1235,7 @@ fontvideo_p fv_create(char *input_file, FILE *log_fp, FILE *graphics_out_fp, uin
     if (!load_font(fv, "assets", "meta.ini")) goto FailExit;
     if (fv->need_chcp)
     {
-        if (log_fp == stdout || log_fp == stderr || graphics_out_fp == stdout || graphics_out_fp == stderr)
+        if (fv->real_time_play)
         {
             init_console(fv);
         }
@@ -1182,30 +1246,39 @@ fontvideo_p fv_create(char *input_file, FILE *log_fp, FILE *graphics_out_fp, uin
     vf.pixel_format = AV_PIX_FMT_BGRA;
     avdec_set_decoded_video_format(fv->av, &vf);
 
-    af.channel_layout = av_get_default_channel_layout(2);
-    af.sample_rate = fv->av->decoded_af.sample_rate;
-    af.sample_fmt = AV_SAMPLE_FMT_FLT;
-    af.bit_rate = (int64_t)af.sample_rate * 2 * sizeof(float);
-    avdec_set_decoded_audio_format(fv->av, &af);
+    if (do_audio_output)
+    {
+        af.channel_layout = av_get_default_channel_layout(2);
+        af.sample_rate = fv->av->decoded_af.sample_rate;
+        af.sample_fmt = AV_SAMPLE_FMT_FLT;
+        af.bit_rate = (int64_t)af.sample_rate * 2 * sizeof(float);
+        avdec_set_decoded_audio_format(fv->av, &af);
+    }
 
     rttimer_init(&fv->tmr, 1);
 
-    do_decode(fv, 0);
-    while (fv->rendered_frame_count + fv->rendering_frame_count < fv->precached_frame_count)
+    if (fv->real_time_play)
     {
-#pragma omp parallel for
-        for (i = 0; i < tc; i++)
+        do_decode(fv, 0);
+        while (fv->rendered_frame_count + fv->rendering_frame_count < fv->precached_frame_count)
         {
-            get_frame_and_render(fv);
+#pragma omp parallel for
+            for (i = 0; i < tc; i++)
+            {
+                get_frame_and_render(fv);
+            }
+        }
+        while (fv->rendering_frame_count);
+
+        rttimer_start(&fv->tmr);
+
+        if (do_audio_output)
+        {
+            fv->sio = siowrap_create(log_fp, SoundIoFormatFloat32NE, af.sample_rate, fv_on_write_sample);
+            if (!fv->sio) goto FailExit;
+            fv->sio->userdata = fv;
         }
     }
-    while (fv->rendering_frame_count);
-
-    rttimer_start(&fv->tmr);
-
-    fv->sio = siowrap_create(log_fp, SoundIoFormatFloat32NE, af.sample_rate, fv_on_write_sample);
-    if (!fv->sio) goto FailExit;
-    fv->sio->userdata = fv;
 
     return fv;
 FailExit:
@@ -1217,6 +1290,10 @@ int fv_show(fontvideo_p fv)
 {
     int i;
     int tc = omp_get_max_threads();
+
+    if (!fv) return 0;
+
+    fv->real_time_play = 1;
 
 #pragma omp parallel for // ordered
     for(i = 0; i < tc; i++)
@@ -1232,8 +1309,8 @@ int fv_show(fontvideo_p fv)
         {
             if (fv->rendered_frame_count)
             {
-                if (!output_rendered_video(fv, rttimer_gettime(&fv->tmr)))
-                    yield();
+                if (!output_rendered_video(fv, rttimer_gettime(&fv->tmr)));
+                yield();
             }
 
             if (fv->tailed && !fv->precached_frame_count) break;
@@ -1246,6 +1323,22 @@ int fv_show(fontvideo_p fv)
             if (fv->tailed && fv->rendered_frame_count >= fv->precached_frame_count) break;
         }
 
+    }
+    return 1;
+}
+
+int fv_render(fontvideo_p fv)
+{
+    if (!fv) return 0;
+    for (;;)
+    {
+        if (!fv->tailed)
+        {
+            avdec_decode(fv->av, fv_on_get_video, fv->do_audio_output ? fv_on_get_audio : NULL);
+        }
+        get_frame_and_render(fv);
+        if (fv->tailed && !output_rendered_video(fv, -1))
+            break;
     }
     return 1;
 }
