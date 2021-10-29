@@ -98,7 +98,7 @@
     <LinkIncremental>true</LinkIncremental>
     <OutDir>$(SolutionDir)out\$(PlatformTarget)_$(Configuration)\</OutDir>
     <IntDir>$(ProjectDir)intermediate\$(PlatformTarget)_$(Configuration)\</IntDir>
-    <IncludePath>$(SolutionDir)include;$(SolutionDir);$(IncludePath)</IncludePath>
+    <IncludePath>$(SolutionDir)include;$(SolutionDir);$(SolutionDir)stdatomic_msvc;$(IncludePath)</IncludePath>
     <LibraryPath>$(SolutionDir)lib\msvc\$(PlatformTarget);$(SolutionDir)lib\msvc\$(PlatformTarget)_$(Configuration);$(LibraryPath)</LibraryPath>
     <ExecutablePath>$(ExecutablePath)</ExecutablePath>
   </PropertyGroup>
@@ -106,7 +106,7 @@
     <LinkIncremental>true</LinkIncremental>
     <OutDir>$(SolutionDir)out\$(PlatformTarget)_$(Configuration)\</OutDir>
     <IntDir>$(ProjectDir)intermediate\$(PlatformTarget)_$(Configuration)\</IntDir>
-    <IncludePath>$(SolutionDir)include;$(SolutionDir);$(IncludePath)</IncludePath>
+    <IncludePath>$(SolutionDir)include;$(SolutionDir);$(SolutionDir)stdatomic_msvc;$(IncludePath)</IncludePath>
     <LibraryPath>$(SolutionDir)lib\msvc\$(PlatformTarget);$(SolutionDir)lib\msvc\$(PlatformTarget)_$(Configuration);$(LibraryPath)</LibraryPath>
     <ExecutablePath>$(ExecutablePath)</ExecutablePath>
   </PropertyGroup>
@@ -114,7 +114,7 @@
     <LinkIncremental>false</LinkIncremental>
     <OutDir>$(SolutionDir)out\$(PlatformTarget)_$(Configuration)\</OutDir>
     <IntDir>$(ProjectDir)intermediate\$(PlatformTarget)_$(Configuration)\</IntDir>
-    <IncludePath>$(SolutionDir)include;$(SolutionDir);$(IncludePath)</IncludePath>
+    <IncludePath>$(SolutionDir)include;$(SolutionDir);$(SolutionDir)stdatomic_msvc;$(IncludePath)</IncludePath>
     <LibraryPath>$(SolutionDir)lib\msvc\$(PlatformTarget);$(SolutionDir)lib\msvc\$(PlatformTarget)_$(Configuration);$(LibraryPath)</LibraryPath>
     <ExecutablePath>$(ExecutablePath)</ExecutablePath>
   </PropertyGroup>
@@ -122,7 +122,7 @@
     <LinkIncremental>false</LinkIncremental>
     <OutDir>$(SolutionDir)out\$(PlatformTarget)_$(Configuration)\</OutDir>
     <IntDir>$(ProjectDir)intermediate\$(PlatformTarget)_$(Configuration)\</IntDir>
-    <IncludePath>$(SolutionDir)include;$(SolutionDir);$(IncludePath)</IncludePath>
+    <IncludePath>$(SolutionDir)include;$(SolutionDir);$(SolutionDir)stdatomic_msvc;$(IncludePath)</IncludePath>
     <LibraryPath>$(SolutionDir)lib\msvc\$(PlatformTarget);$(SolutionDir)lib\msvc\$(PlatformTarget)_$(Configuration);$(LibraryPath)</LibraryPath>
     <ExecutablePath>$(ExecutablePath)</ExecutablePath>
   </PropertyGroup>

@@ -112,11 +112,14 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <CustomBuildStep>
-      <Command>copy $(ProjectDir)*.h $(SolutionDir)include\</Command>
+      <Command>
+      </Command>
     </CustomBuildStep>
     <CustomBuildStep>
-      <Message>Copying headers</Message>
-      <Outputs>$(SolutionDir)include\stdalign.h;$(SolutionDir)include\stdatomic.h;$(SolutionDir)include\threads.h;%(Outputs)</Outputs>
+      <Message>
+      </Message>
+      <Outputs>
+      </Outputs>
     </CustomBuildStep>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -141,11 +144,14 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <CustomBuildStep>
-      <Command>copy $(ProjectDir)*.h $(SolutionDir)include\</Command>
+      <Command>
+      </Command>
     </CustomBuildStep>
     <CustomBuildStep>
-      <Message>Copying headers</Message>
-      <Outputs>$(SolutionDir)include\stdalign.h;$(SolutionDir)include\stdatomic.h;$(SolutionDir)include\threads.h;%(Outputs)</Outputs>
+      <Message>
+      </Message>
+      <Outputs>
+      </Outputs>
     </CustomBuildStep>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -162,11 +168,14 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <CustomBuildStep>
-      <Command>copy $(ProjectDir)*.h $(SolutionDir)include\</Command>
+      <Command>
+      </Command>
     </CustomBuildStep>
     <CustomBuildStep>
-      <Message>Copying headers</Message>
-      <Outputs>$(SolutionDir)include\stdalign.h;$(SolutionDir)include\stdatomic.h;$(SolutionDir)include\threads.h;%(Outputs)</Outputs>
+      <Message>
+      </Message>
+      <Outputs>
+      </Outputs>
     </CustomBuildStep>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -191,11 +200,14 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <CustomBuildStep>
-      <Command>copy $(ProjectDir)*.h $(SolutionDir)include\</Command>
+      <Command>
+      </Command>
     </CustomBuildStep>
     <CustomBuildStep>
-      <Message>Copying headers</Message>
-      <Outputs>$(SolutionDir)include\stdalign.h;$(SolutionDir)include\stdatomic.h;$(SolutionDir)include\threads.h;%(Outputs)</Outputs>
+      <Message>
+      </Message>
+      <Outputs>
+      </Outputs>
     </CustomBuildStep>
   </ItemDefinitionGroup>
   <ItemGroup>
