@@ -2,6 +2,10 @@
 
 #include"fontvideo.h"
 
+#if defined(_WIN32) || defined(__MINGW32__)
+#include<Windows.h>
+#endif
+
 void usage(char *argv0)
 {
     fprintf(stderr, "Usage: %s -i <input> [-o output.txt] [-v] [-p seconds] [-m] [-s width height] [-b]\n"
@@ -10,7 +14,7 @@ void usage(char *argv0)
         "\t-v : Verbose mode, output debug informations.\n"
         "\t-p : [Optional] Specify pre-render seconds, Longer value results longer delay but better quality.\n"
         "\t-m : Mute sound output.\n"
-        "\t-s : [Optional] Size of the output, default to 80x25\n"
+        "\t-s : [Optional] Size of the output, default is 80 characters per row and 25 rows.\n"
         "\t-b : Only do white-black output.\n"
         "", argv0);
 }
@@ -28,6 +32,21 @@ int main(int argc, char **argv)
     int output_width = 80;
     int output_height = 25;
     int no_colors = 0;
+
+#if defined(_WIN32) || defined(__MINGW32__)
+#pragma comment(lib, "user32.lib")
+    if (0)
+    {
+        CONSOLE_SCREEN_BUFFER_INFO ConsoleInfo;
+        CONSOLE_FONT_INFO FontInfo;
+        RECT ClientRect;
+        GetCurrentConsoleFont(GetStdHandle(STD_OUTPUT_HANDLE), FALSE, &FontInfo);
+        GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &ConsoleInfo);
+        GetClientRect(GetConsoleWindow(), &ClientRect);
+        output_width = ConsoleInfo.dwSize.X;
+        output_height = (ClientRect.bottom - ClientRect.top) / FontInfo.dwFontSize.Y - 2;
+    }
+#endif
 
     for (i = 1; i < argc;)
     {
@@ -59,7 +78,7 @@ int main(int argc, char **argv)
             prerender_secs = atof(argv[i++]);
             if (prerender_secs < 0.0)
             {
-                fprintf(stderr, "Bad pre-render seconds value: %llf\n", prerender_secs);
+                fprintf(stderr, "Bad pre-render seconds value: %lf\n", prerender_secs);
                 goto BadUsageExit;
             }
         }
