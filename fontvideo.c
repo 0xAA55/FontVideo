@@ -1018,7 +1018,7 @@ static fontvideo_frame_p get_frame_and_render(fontvideo_p fv)
         if (atomic_compare_exchange_strong(&f->rendering, &expected, get_thread_id()))
         {
             // If the frame isn't being rendered, first detect if it's too late to render it, then do frame skipping.
-            if (fv->real_time_play && rttimer_gettime(&fv->tmr) > f->timestamp)
+            if (fv->real_time_play && rttimer_gettime(&fv->tmr) > f->timestamp + fv->precache_seconds - 0.5f)
             {
                 // Too late to render the frame, skip it.
                 fontvideo_frame_p next = f->next;
@@ -1166,7 +1166,8 @@ static int do_decode(fontvideo_p fv, int keeprun)
         lock_frame(fv);
         while (!fv->tailed && (
             !fv->frame_last || (fv->frame_last && fv->frame_last->timestamp < target_timestamp) ||
-            !fv->audio_last || (fv->frame_last && fv->audio_last->timestamp < target_timestamp)))
+            (fv->do_audio_output &&
+            !fv->audio_last || (fv->audio_last && fv->audio_last->timestamp < target_timestamp))))
         {
             unlock_frame(fv);
             if (fv->verbose_threading)
@@ -1174,7 +1175,7 @@ static int do_decode(fontvideo_p fv, int keeprun)
                 fprintf(stderr, "Decoding frames. (%d)\n", get_thread_id());
             }
             ret = 1;
-            fv->tailed = !avdec_decode(fv->av, fv_on_get_video, fv_on_get_audio);
+            fv->tailed = !avdec_decode(fv->av, fv_on_get_video, fv->do_audio_output ? fv_on_get_audio : NULL);
             if (keeprun)
             {
                 target_timestamp = rttimer_gettime(&fv->tmr) + fv->precache_seconds;
