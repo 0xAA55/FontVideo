@@ -1325,6 +1325,7 @@ int fv_show(fontvideo_p fv)
         }
 
     }
+    while (fv->audios || fv->audio_last) yield();
     return 1;
 }
 
