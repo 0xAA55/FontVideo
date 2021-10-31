@@ -18,10 +18,22 @@
 
 static void init_console(fontvideo_p fv)
 {
-    fv->output_utf8 = SetConsoleOutputCP(CP_UTF8);
-    if (!fv->output_utf8)
+    HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD ConMode;
+
+    if (fv->need_chcp)
     {
-        fv->output_utf8 = SetConsoleCP(CP_UTF8);
+        fv->output_utf8 = SetConsoleOutputCP(CP_UTF8);
+        if (!fv->output_utf8)
+        {
+            fv->output_utf8 = SetConsoleCP(CP_UTF8);
+        }
+    }
+
+    if (fv->real_time_play)
+    {
+        GetConsoleMode(hConsole, &ConMode);
+        SetConsoleMode(hConsole, ConMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
     }
 }
 
@@ -31,17 +43,19 @@ static void set_cursor_xy(int x, int y)
     SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), pos);
 }
 
-static void set_console_color(FILE *con, int clr)
+static void set_console_color(fontvideo_p fv, int clr)
 {
-    WORD attr = FOREGROUND_INTENSITY;
-
-    // bit order of BGR turned to RGB
-
-    if (clr & 1) attr |= FOREGROUND_RED;
-    if (clr & 2) attr |= FOREGROUND_GREEN;
-    if (clr & 4) attr |= FOREGROUND_BLUE;
-    SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), attr);
-    con;
+    switch (clr)
+    {
+    case 0: strcat(fv->utf8buf, "\x1b[1;0m");  break;
+    case 1: strcat(fv->utf8buf, "\x1b[1;31m"); break;
+    case 2: strcat(fv->utf8buf, "\x1b[1;32m"); break;
+    case 3: strcat(fv->utf8buf, "\x1b[1;33m"); break;
+    case 4: strcat(fv->utf8buf, "\x1b[1;34m"); break;
+    case 5: strcat(fv->utf8buf, "\x1b[1;35m"); break;
+    case 6: strcat(fv->utf8buf, "\x1b[1;36m"); break;
+    case 7: strcat(fv->utf8buf, "\x1b[1;37m"); break;
+    }
 }
 
 static void yield()
@@ -64,18 +78,18 @@ static void set_cursor_xy(int x, int y)
     printf("\033[%d;%dH", y + 1, x + 1);
 }
 
-static void set_console_color(FILE *con, int clr)
+static void set_console_color(fontvideo_p fv, int clr)
 {
     switch (clr)
     {
-    case 0: fputs("\x1B[0m", con);  break;
-    case 1: fputs("\x1B[31m", con); break;
-    case 2: fputs("\x1B[32m", con); break;
-    case 3: fputs("\x1B[33m", con); break;
-    case 4: fputs("\x1B[34m", con); break;
-    case 5: fputs("\x1B[35m", con); break;
-    case 6: fputs("\x1B[36m", con); break;
-    case 7: fputs("\x1B[37m", con); break;
+    case 0: strcat(fv->utf8buf, "\x1B[1;0m" );  break;
+    case 1: strcat(fv->utf8buf, "\x1B[1;31m"); break;
+    case 2: strcat(fv->utf8buf, "\x1B[1;32m"); break;
+    case 3: strcat(fv->utf8buf, "\x1B[1;33m"); break;
+    case 4: strcat(fv->utf8buf, "\x1B[1;34m"); break;
+    case 5: strcat(fv->utf8buf, "\x1B[1;35m"); break;
+    case 6: strcat(fv->utf8buf, "\x1B[1;36m"); break;
+    case 7: strcat(fv->utf8buf, "\x1B[1;37m"); break;
     }
 }
 
@@ -1169,11 +1183,13 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
         if (!cur->rendered) goto FailExit;
         if (fv->do_colored_output)
         {
+            char *u8chr = utf8buf;
             cur_color = cur->c_row[0][0];
-            set_console_color(fv->graphics_out_fp, cur_color);
+            memset(utf8buf, 0, fv->utf8buf_size);
+            set_console_color(fv, cur_color);
+            u8chr = strchr(u8chr, 0);
             for (y = 0; y < (int)cur->h; y++)
             {
-                char *u8chr = utf8buf;
                 for (x = 0; x < (int)cur->w; x++)
                 {
                     int new_color = cur->c_row[y][x];
@@ -1181,15 +1197,14 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                     {
                         cur_color = new_color;
                         *u8chr = '\0';
-                        fputs(utf8buf, fv->graphics_out_fp);
-                        u8chr = utf8buf;
-                        set_console_color(fv->graphics_out_fp, new_color);
+                        set_console_color(fv, new_color);
+                        u8chr = strchr(u8chr, 0);
                     }
                     u32toutf8(&u8chr, cur->row[y][x]);
                 }
-                *u8chr = '\0';
-                fputs(utf8buf, fv->graphics_out_fp);
             }
+            *u8chr = '\0';
+            fputs(utf8buf, fv->graphics_out_fp);
         }
         else
         {
@@ -1299,16 +1314,13 @@ fontvideo_p fv_create(char *input_file, FILE *log_fp, int do_verbose_log, FILE *
     fv->output_h = y_resolution;
     fv->precache_seconds = precache_seconds;
 
-    fv->utf8buf_size = (size_t)fv->output_w * 32 + 1;
+    fv->utf8buf_size = (size_t)fv->output_w * fv->output_h * 32 + 1;
     fv->utf8buf = malloc(fv->utf8buf_size);
     if (!fv->utf8buf) goto FailExit;
     if (!load_font(fv, "assets", "meta.ini")) goto FailExit;
-    if (fv->need_chcp)
+    if (fv->need_chcp || fv->real_time_play)
     {
-        if (fv->real_time_play)
-        {
-            init_console(fv);
-        }
+        init_console(fv);
     }
 
     vf.width = x_resolution * fv->font_w;
@@ -1354,6 +1366,12 @@ fontvideo_p fv_create(char *input_file, FILE *log_fp, int do_verbose_log, FILE *
 FailExit:
     fv_destroy(fv);
     return NULL;
+}
+
+int fv_forward_to(fontvideo_p fv, double timestamp)
+{
+    if (!fv) return 0;
+    return avdec_forward_to(fv->av, timestamp);
 }
 
 int fv_show(fontvideo_p fv)
