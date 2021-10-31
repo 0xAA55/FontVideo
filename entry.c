@@ -158,12 +158,10 @@ int main(int argc, char **argv)
 
     if (!fp_out) fp_out = stdout;
 
-    fv = fv_create(input_file, stderr, verbose, fp_out, output_width, output_height, prerender_secs, !mute);
+    fv = fv_create(input_file, stderr, verbose, fp_out, output_width, output_height, prerender_secs, !mute, start_sec);
     if (!fv) goto FailExit;
 
     if (no_colors) fv->do_colored_output = 0;
-
-    avdec_forward_to(fv->av, start_sec);
 
     if (real_time_show)
         fv_show(fv);

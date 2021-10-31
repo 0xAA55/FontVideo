@@ -1280,7 +1280,7 @@ static int do_decode(fontvideo_p fv, int keeprun)
     return ret;
 }
 
-fontvideo_p fv_create(char *input_file, FILE *log_fp, int do_verbose_log, FILE *graphics_out_fp, uint32_t x_resolution, uint32_t y_resolution, double precache_seconds, int do_audio_output)
+fontvideo_p fv_create(char *input_file, FILE *log_fp, int do_verbose_log, FILE *graphics_out_fp, uint32_t x_resolution, uint32_t y_resolution, double precache_seconds, int do_audio_output, double start_timestamp)
 {
     fontvideo_p fv = NULL;
     avdec_video_format_t vf = {0};
@@ -1337,7 +1337,11 @@ fontvideo_p fv_create(char *input_file, FILE *log_fp, int do_verbose_log, FILE *
         avdec_set_decoded_audio_format(fv->av, &af);
     }
 
+    if (start_timestamp < 0) start_timestamp = 0;
+    else avdec_seek(fv->av, start_timestamp);
+
     rttimer_init(&fv->tmr, 1);
+    rttimer_settime(&fv->tmr, start_timestamp);
 
     if (fv->real_time_play)
     {
@@ -1366,12 +1370,6 @@ fontvideo_p fv_create(char *input_file, FILE *log_fp, int do_verbose_log, FILE *
 FailExit:
     fv_destroy(fv);
     return NULL;
-}
-
-int fv_forward_to(fontvideo_p fv, double timestamp)
-{
-    if (!fv) return 0;
-    return avdec_forward_to(fv->av, timestamp);
 }
 
 int fv_show(fontvideo_p fv)
