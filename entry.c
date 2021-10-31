@@ -36,7 +36,7 @@ int main(int argc, char **argv)
 
 #if defined(_WIN32) || defined(__MINGW32__)
 #pragma comment(lib, "user32.lib")
-    if (0) // Try to detect console window size, but it don't work well with WSL
+    if (1) // Try to detect console window size, but it don't work well with WSL
     {
         CONSOLE_SCREEN_BUFFER_INFO ConsoleInfo;
         CONSOLE_FONT_INFO FontInfo;
@@ -51,7 +51,7 @@ int main(int argc, char **argv)
         // referring to the CMD window size, but does not work with WSL.
         //     output_height = (ClientRect.bottom - ClientRect.top) / FontInfo.dwFontSize.Y - 2;
         // Gave up trying to detect the height of the terminal.
-        output_height = output_width * 3 / 4;
+        output_height = output_width / 4 - 2;
     }
 #endif
 
