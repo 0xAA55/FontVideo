@@ -295,30 +295,24 @@ FailExit:
     return;
 }
 
-static void seek_on_get_video(avdec_p av, void *bitmap, int width, int height, size_t pitch, double timestamp, enum AVPixelFormat pixel_format)
+int avdec_seek(avdec_p av, double timestamp)
 {
-    FILE *log_fp = av->log_fp;
-    AVFrame *f = av->frame;
-    double time_position = (double)f->best_effort_timestamp * av_q2d(av->video_stream->time_base);
-    av->video_timestamp = time_position;
-}
+    int rv = 0;
+    int64_t seek_ts;
 
-static void seek_on_get_audio(avdec_p av, void **samples_of_channel, int channel_count, size_t num_samples_per_channel, double timestamp, enum AVSampleFormat sample_fmt)
-{
-    AVFrame *f = av->frame;
-    double time_position = (double)f->best_effort_timestamp * av_q2d(av->audio_stream->time_base);
-    av->audio_timestamp = time_position;
-}
-
-int avdec_forward_to(avdec_p av, double timestamp)
-{
     if (!av || timestamp < 0) return 0;
-    while (av->video_timestamp < timestamp && av->audio_timestamp < timestamp)
+
+    if (av->video_stream)
     {
-        avdec_decode(av, seek_on_get_video, seek_on_get_audio);
-        if (av->is_last_frame) return 1;
+        seek_ts = (int64_t)(timestamp / av_q2d(av->video_stream->time_base));
+        return av_seek_frame(av->format_context, av->video_index, seek_ts, AVSEEK_FLAG_BACKWARD | AVSEEK_FLAG_FRAME) >= 0;
     }
-    return 1;
+    if (av->audio_stream)
+    {
+        seek_ts = (int64_t)(timestamp / av_q2d(av->audio_stream->time_base));
+        return av_seek_frame(av->format_context, av->audio_index, seek_ts, AVSEEK_FLAG_BACKWARD | AVSEEK_FLAG_FRAME) >= 0;
+    }
+    return 0;
 }
 
 int avdec_decode(avdec_p av, pfn_on_get_video on_get_video, pfn_on_get_audio on_get_audio)
