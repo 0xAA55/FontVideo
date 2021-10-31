@@ -1177,7 +1177,7 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                 for (x = 0; x < (int)cur->w; x++)
                 {
                     int new_color = cur->c_row[y][x];
-                    if (new_color != cur_color)
+                    if (new_color != cur_color && cur->row[y][x] != ' ')
                     {
                         cur_color = new_color;
                         *u8chr = '\0';
