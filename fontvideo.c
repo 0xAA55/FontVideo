@@ -1018,7 +1018,7 @@ static fontvideo_frame_p get_frame_and_render(fontvideo_p fv)
         if (atomic_compare_exchange_strong(&f->rendering, &expected, get_thread_id()))
         {
             // If the frame isn't being rendered, first detect if it's too late to render it, then do frame skipping.
-            if (fv->real_time_play && rttimer_gettime(&fv->tmr) > f->timestamp + fv->precache_seconds - 0.5f)
+            if (fv->real_time_play && rttimer_gettime(&fv->tmr) > f->timestamp + fv->precache_seconds - 1.0f)
             {
                 // Too late to render the frame, skip it.
                 fontvideo_frame_p next = f->next;
@@ -1075,7 +1075,7 @@ static fontvideo_frame_p get_frame_and_render(fontvideo_p fv)
 static int output_rendered_video(fontvideo_p fv, double timestamp)
 {
     char* utf8buf = fv->utf8buf;
-    fontvideo_frame_p cur = NULL;
+    fontvideo_frame_p cur = NULL, next = NULL, prev = NULL;
     int cur_color = 0;
 
     if (!fv->frames) return 0;
@@ -1085,11 +1085,80 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
 
     lock_frame(fv);
     cur = fv->frames;
+    if (!cur)
+    {
+        unlock_frame(fv);
+        goto FailExit;
+    }
+    // If output is too slow, skip frames.
+    if (fv->real_time_play && timestamp >= 0)
+    {
+        while(1)
+        {
+            next = cur->next;
+            if (!next) break;
+            if (timestamp >= cur->timestamp)
+            {
+                // Timestamp arrived
+                if (timestamp < next->timestamp) break;
+
+                // If the next frame also need to output right now, skip the current frame
+                if (cur->rendered)
+                {
+                    if (fv->frames == cur)
+                    {
+                        fv->frames = next;
+                    }
+                    else
+                    {
+                        if (!prev) prev = fv->frames;
+                        prev->next = next;
+                    }
+                    frame_delete(cur);
+                    cur = next;
+                    fv->precached_frame_count--;
+                    fv->rendered_frame_count--;
+                }
+                else
+                {
+                    atomic_int expected = 0;
+
+                    // Acquire it to prevent it from being rendered
+                    if (atomic_compare_exchange_strong(&cur->rendering, &expected, get_thread_id()))
+                    {
+                        if (fv->frames == cur)
+                        {
+                            fv->frames = next;
+                        }
+                        else
+                        {
+                            if (!prev) prev = fv->frames;
+                            prev->next = next;
+                        }
+                        frame_delete(cur);
+                        cur = next;
+                        fv->precached_frame_count--;
+                        fv->rendered_frame_count--;
+                    }
+                    else
+                    {
+                        // Sadly it's acquired by a rendering thread, skip it.
+                        prev = cur;
+                        cur = next;
+                    }
+                }
+            }
+            else
+            {
+                // Timestamp not arrived to this frame
+                break;
+            }
+        }
+    }
     unlock_frame(fv);
-    if (!cur) goto FailExit;
     if (timestamp < 0 || timestamp >= cur->timestamp || !fv->real_time_play)
     {
-        fontvideo_frame_p next = cur->next;
+        next = cur->next;
         int x, y;
 #if !defined(_DEBUG)
         if (1)
