@@ -245,6 +245,7 @@ static void on_video_decoded(avdec_p av, pfn_on_get_video on_get_video)
     FILE *log_fp = av->log_fp;
     AVFrame *f = av->frame;
     double time_position = (double)f->best_effort_timestamp * av_q2d(av->video_stream->time_base);
+    av->video_timestamp = time_position;
     if (av->video_conv)
     {
         if (!sws_scale_frame(av->video_conv, av->video_conv_frame, av->frame))
@@ -261,6 +262,7 @@ static void on_audio_decoded(avdec_p av, pfn_on_get_audio on_get_audio)
 {
     AVFrame *f = av->frame;
     double time_position = (double)f->best_effort_timestamp * av_q2d(av->audio_stream->time_base);
+    av->audio_timestamp = time_position;
     if (av->audio_conv)
     {
         size_t dst_samples = av_rescale_rnd(swr_get_delay(av->audio_conv, av->decoded_af.sample_rate) +
@@ -291,6 +293,32 @@ static void on_audio_decoded(avdec_p av, pfn_on_get_audio on_get_audio)
     return;
 FailExit:
     return;
+}
+
+static void seek_on_get_video(avdec_p av, void *bitmap, int width, int height, size_t pitch, double timestamp, enum AVPixelFormat pixel_format)
+{
+    FILE *log_fp = av->log_fp;
+    AVFrame *f = av->frame;
+    double time_position = (double)f->best_effort_timestamp * av_q2d(av->video_stream->time_base);
+    av->video_timestamp = time_position;
+}
+
+static void seek_on_get_audio(avdec_p av, void **samples_of_channel, int channel_count, size_t num_samples_per_channel, double timestamp, enum AVSampleFormat sample_fmt)
+{
+    AVFrame *f = av->frame;
+    double time_position = (double)f->best_effort_timestamp * av_q2d(av->audio_stream->time_base);
+    av->audio_timestamp = time_position;
+}
+
+int avdec_forward_to(avdec_p av, double timestamp)
+{
+    if (!av || timestamp < 0) return 0;
+    while (av->video_timestamp < timestamp && av->audio_timestamp < timestamp)
+    {
+        avdec_decode(av, seek_on_get_video, seek_on_get_audio);
+        if (av->is_last_frame) return 1;
+    }
+    return 1;
 }
 
 int avdec_decode(avdec_p av, pfn_on_get_video on_get_video, pfn_on_get_audio on_get_audio)

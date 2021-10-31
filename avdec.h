@@ -48,6 +48,10 @@ typedef struct avdec_struct
     // the status of reading frames
     int is_last_frame;
 
+    // Current timestamp
+    double video_timestamp;
+    double audio_timestamp;
+
     // decoded format for each stream
     avdec_video_format_t decoded_vf;
     avdec_audio_format_t decoded_af;
@@ -81,6 +85,7 @@ int avdec_get_video_format(avdec_p av, avdec_video_format_p vf);
 int avdec_get_audio_format(avdec_p av, avdec_audio_format_p af);
 int avdec_set_decoded_video_format(avdec_p av, avdec_video_format_p vf); // Conversion will be performed if the format doesn't match the original decoded format.
 int avdec_set_decoded_audio_format(avdec_p av, avdec_audio_format_p af);
+int avdec_forward_to(avdec_p av, double timestamp);
 int avdec_decode(avdec_p av, pfn_on_get_video on_get_video, pfn_on_get_audio on_get_audio);
 void avdec_close(avdec_p *pav);
 
