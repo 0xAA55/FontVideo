@@ -15,7 +15,9 @@ void usage(char *argv0)
         "\t-v : Verbose mode, output debug informations.\n"
         "\t-p : [Optional] Specify pre-render seconds, Longer value results longer delay but better quality.\n"
         "\t-m : Mute sound output.\n"
-        "\t-s : [Optional] Size of the output, default is 80 characters per row and 25 rows.\n"
+        "\t-w : [Optional] Width of the output.\n"
+        "\t-h : [Optional] Height of the output.\n"
+        "\t-s : [Optional] Size of the output, default is to detect the size of the console window, or 80x25 if failed.\n"
         "\t-b : Only do white-black output.\n"
         "", argv0, argv0);
 }
@@ -36,22 +38,24 @@ int main(int argc, char **argv)
 
 #if defined(_WIN32) || defined(__MINGW32__)
 #pragma comment(lib, "user32.lib")
-    if (1) // Try to detect console window size, but it don't work well with WSL
+    if (1) // Try to detect console window size.
     {
         CONSOLE_SCREEN_BUFFER_INFO ConsoleInfo;
-        CONSOLE_FONT_INFO FontInfo;
-        RECT ClientRect;
-        GetCurrentConsoleFont(GetStdHandle(STD_OUTPUT_HANDLE), FALSE, &FontInfo);
-        GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &ConsoleInfo);
-        GetClientRect(GetConsoleWindow(), &ClientRect);
-        output_width = ConsoleInfo.dwSize.X;
-        // ConsoleInfo.dwSize.Y is not the height of the terminal window.
-        // It's actually the buffer size of the CMD output.
-        // The commented code below works well with CMD by calculating the height by
-        // referring to the CMD window size, but does not work with WSL.
-        //     output_height = (ClientRect.bottom - ClientRect.top) / FontInfo.dwFontSize.Y - 2;
-        // Gave up trying to detect the height of the terminal.
-        output_height = output_width / 4 - 2;
+        // CONSOLE_FONT_INFO FontInfo;
+        // RECT ClientRect;
+        // GetCurrentConsoleFont(GetStdHandle(STD_OUTPUT_HANDLE), FALSE, &FontInfo);
+        // GetClientRect(GetConsoleWindow(), &ClientRect))
+        if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &ConsoleInfo))
+        {
+            output_width = ConsoleInfo.dwSize.X;
+            // ConsoleInfo.dwSize.Y is not the height of the terminal window.
+            // It's actually the buffer size of the CMD output.
+            // The commented code below works well with CMD by calculating the height by
+            // referring to the CMD window size, but does not work with WSL.
+            //     output_height = (ClientRect.bottom - ClientRect.top) / FontInfo.dwFontSize.Y - 2;
+            // Gave up trying to detect the height of the terminal.
+            output_height = output_width / 4 - 2;
+        }
     }
 #endif
 
@@ -91,16 +95,21 @@ int main(int argc, char **argv)
             {
                 if (++i >= argc) goto BadUsageExit;
                 prerender_secs = atof(argv[i++]);
-                if (prerender_secs < 0.0)
-                {
-                    fprintf(stderr, "Bad pre-render seconds value: %lf\n", prerender_secs);
-                    goto BadUsageExit;
-                }
             }
             else if (!stricmp(argv[i], "-m"))
             {
                 i++;
                 mute = 1;
+            }
+            else if (!stricmp(argv[i], "-w"))
+            {
+                if (++i >= argc) goto BadUsageExit;
+                output_width = atoi(argv[i++]);
+            }
+            else if (!stricmp(argv[i], "-h"))
+            {
+                if (++i >= argc) goto BadUsageExit;
+                output_height = atoi(argv[i++]);
             }
             else if (!stricmp(argv[i], "-s"))
             {
@@ -108,11 +117,6 @@ int main(int argc, char **argv)
                 output_width = atoi(argv[i++]);
                 if (i >= argc) goto BadUsageExit;
                 output_height = atoi(argv[i++]);
-                if (output_width <= 0 || output_height <= 0)
-                {
-                    fprintf(stderr, "Bad size value parsed out: %d, %d\n", output_width, output_height);
-                    goto BadUsageExit;
-                }
             }
             else if (!stricmp(argv[i], "-b"))
             {
@@ -130,6 +134,18 @@ int main(int argc, char **argv)
     if (!input_file)
     {
         fprintf(stderr, "No input file provided.\n");
+        goto BadUsageExit;
+    }
+
+    if (output_width <= 0 || output_height <= 0)
+    {
+        fprintf(stderr, "Bad size value parsed out: %d, %d\n", output_width, output_height);
+        goto BadUsageExit;
+    }
+
+    if (prerender_secs < 0.0)
+    {
+        fprintf(stderr, "Bad pre-render seconds value: %lf\n", prerender_secs);
         goto BadUsageExit;
     }
 
