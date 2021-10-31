@@ -8,7 +8,7 @@
 
 void usage(char *argv0)
 {
-    fprintf(stderr, "Usage: %s -i <input> [-o output.txt] [-v] [-p seconds] [-m] [-s width height] [-b]\n"
+    fprintf(stderr, "Usage: %s -i <input> [-o output.txt] [-v] [-p seconds] [-m] [-w width] [-h height] [-s width height] [-S from_sec] [-b]\n"
         "Or: %s <input>\n"
         "\t-i : Specify the input video file name.\n"
         "\t-o : [Optional] Specify the output text file name.\n"
@@ -19,6 +19,7 @@ void usage(char *argv0)
         "\t-h : [Optional] Height of the output.\n"
         "\t-s : [Optional] Size of the output, default is to detect the size of the console window, or 80x25 if failed.\n"
         "\t-b : Only do white-black output.\n"
+        "\t-S : [Optional] Set the playback start time of seconds.\n"
         "", argv0, argv0);
 }
 
@@ -32,6 +33,7 @@ int main(int argc, char **argv)
     int verbose = 0;
     int mute = 0;
     double prerender_secs = 5.0;
+    double start_sec = -1.0;
     int output_width = 80;
     int output_height = 25;
     int no_colors = 0;
@@ -69,12 +71,12 @@ int main(int argc, char **argv)
         // Parse arguments
         for (i = 1; i < argc;)
         {
-            if (!stricmp(argv[i], "-i"))
+            if (!strcmp(argv[i], "-i"))
             {
                 if (++i >= argc) goto BadUsageExit;
                 input_file = argv[i++];
             }
-            else if (!stricmp(argv[i], "-o"))
+            else if (!strcmp(argv[i], "-o"))
             {
                 if (++i >= argc) goto BadUsageExit;
                 fp_out = fopen(argv[i++], "w");
@@ -86,42 +88,47 @@ int main(int argc, char **argv)
                 mute = 1;
                 real_time_show = 0;
             }
-            else if (!stricmp(argv[i], "-v"))
+            else if (!strcmp(argv[i], "-v"))
             {
                 i++;
                 verbose = 1;
             }
-            else if (!stricmp(argv[i], "-p"))
+            else if (!strcmp(argv[i], "-p"))
             {
                 if (++i >= argc) goto BadUsageExit;
                 prerender_secs = atof(argv[i++]);
             }
-            else if (!stricmp(argv[i], "-m"))
+            else if (!strcmp(argv[i], "-m"))
             {
                 i++;
                 mute = 1;
             }
-            else if (!stricmp(argv[i], "-w"))
+            else if (!strcmp(argv[i], "-w"))
             {
                 if (++i >= argc) goto BadUsageExit;
                 output_width = atoi(argv[i++]);
             }
-            else if (!stricmp(argv[i], "-h"))
+            else if (!strcmp(argv[i], "-h"))
             {
                 if (++i >= argc) goto BadUsageExit;
                 output_height = atoi(argv[i++]);
             }
-            else if (!stricmp(argv[i], "-s"))
+            else if (!strcmp(argv[i], "-s"))
             {
                 if (++i >= argc) goto BadUsageExit;
                 output_width = atoi(argv[i++]);
                 if (i >= argc) goto BadUsageExit;
                 output_height = atoi(argv[i++]);
             }
-            else if (!stricmp(argv[i], "-b"))
+            else if (!strcmp(argv[i], "-b"))
             {
                 i++;
                 no_colors = 1;
+            }
+            else if (!strcmp(argv[i], "-S"))
+            {
+                if (++i >= argc) goto BadUsageExit;
+                start_sec = atof(argv[i++]);
             }
             else
             {
@@ -155,6 +162,8 @@ int main(int argc, char **argv)
     if (!fv) goto FailExit;
 
     if (no_colors) fv->do_colored_output = 0;
+
+    avdec_forward_to(fv->av, start_sec);
 
     if (real_time_show)
         fv_show(fv);
