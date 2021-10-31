@@ -91,6 +91,7 @@ typedef struct fontvideo_struct
 }fontvideo_t, *fontvideo_p;
 
 fontvideo_p fv_create(char *input_file, FILE *log_fp, int do_verbose_log, FILE *graphics_out_fp, uint32_t x_resolution, uint32_t y_resolution, double precache_seconds, int do_audio_output);
+int fv_forward_to(fontvideo_p fv, double timestamp);
 int fv_show(fontvideo_p fv);
 int fv_render(fontvideo_p fv);
 void fv_destroy(fontvideo_p fv);
