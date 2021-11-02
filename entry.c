@@ -6,6 +6,8 @@
 #include<Windows.h>
 #define SUBDIR "\\"
 #else
+#include<sys/ioctl.h>
+#include<unistd.h>
 #define SUBDIR "/"
 #endif
 
@@ -66,6 +68,14 @@ int main(int argc, char **argv)
             // Gave up trying to detect the height of the terminal.
             output_height = output_width / 4 - 2;
         }
+    }
+#else
+    if (1)
+    {
+        struct winsize w;
+        ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
+        output_width = w.ws_col;
+        output_height = w.ws_row - 2;
     }
 #endif
 
