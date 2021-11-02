@@ -8,7 +8,7 @@
 // The UTF-8 output string pointer will be moved to the next position.
 void u32toutf8
 (
-    int8_t **ppUTF8,
+    char **ppUTF8,
     const uint32_t CharCode
 );
 
@@ -16,14 +16,14 @@ void u32toutf8
 // The UTF-8 string pointer will be moved to the next position.
 uint32_t utf8tou32char
 (
-    int8_t **ppUTF8
+    char **ppUTF8
 );
 
 // Convert 32-bit unicode into UTF-16 form one by one.
 // The UTF-16 output string pointer will be moved to the next position.
 void u32toutf16
 (
-    int16_t **ppUTF16,
+    wchar_t **ppUTF16,
     const uint32_t CharCode
 );
 
@@ -31,7 +31,7 @@ void u32toutf16
 // The UTF-16 string pointer will be moved to the next position.
 uint32_t u16tou32char
 (
-    int16_t **ppUTF16
+    wchar_t **ppUTF16
 );
 
 #endif // !_UTF_H_

@@ -4,11 +4,11 @@
 // The UTF-8 output string pointer will be moved to the next position.
 void u32toutf8
 (
-    int8_t **ppUTF8,
+    char **ppUTF8,
     const uint32_t CharCode
 )
 {
-    int8_t *pUTF8 = ppUTF8[0];
+    char *pUTF8 = ppUTF8[0];
 
     if (CharCode >= 0x4000000)
     {
@@ -58,12 +58,12 @@ void u32toutf8
 // The UTF-8 string pointer will be moved to the next position.
 uint32_t utf8tou32char
 (
-    int8_t **ppUTF8
+    char **ppUTF8
 )
 {
     size_t cb = 0;
     uint32_t ret = 0;
-    int8_t *pUTF8 = ppUTF8[0];
+    char *pUTF8 = ppUTF8[0];
 
     // Detect the available room size of the UTF-8 buffer
     while (cb < 6 && pUTF8[cb]) cb++;
@@ -164,11 +164,11 @@ FailExit:
 // The UTF-16 output string pointer will be moved to the next position.
 void u32toutf16
 (
-    int16_t **ppUTF16,
+    wchar_t **ppUTF16,
     const uint32_t CharCode
 )
 {
-    int16_t *pUTF16 = ppUTF16[0];
+    wchar_t *pUTF16 = ppUTF16[0];
     if (CharCode <= 0xffff)
     {
         *pUTF16++ = (uint16_t)CharCode;
@@ -192,10 +192,10 @@ void u32toutf16
 // The UTF-16 string pointer will be moved to the next position.
 uint32_t u16tou32char
 (
-    int16_t **ppUTF16
+    wchar_t **ppUTF16
 )
 {
-    int16_t *pUTF16 = ppUTF16[0];
+    wchar_t *pUTF16 = ppUTF16[0];
     uint32_t CharCode = 0xFFFD;
 
     switch (pUTF16[0] & 0xFC00)
