@@ -162,9 +162,9 @@ siowrap_p siowrap_create(FILE *log_fp, enum SoundIoFormat format, int sample_rat
 {
 	siowrap_p s = NULL;
 	int err;
-	
+
 	if (!log_fp) log_fp = stderr;
-	
+
 	s = calloc(1, sizeof s[0]);
 	if (!s) return s;
 
@@ -191,8 +191,6 @@ siowrap_p siowrap_create(FILE *log_fp, enum SoundIoFormat format, int sample_rat
 
 	soundio_flush_events(s->soundio);
 
-	// on_devices_change(s->soundio);
-
 	if (!s->device || !s->outstream) goto FailExit;
 
 	return s;
@@ -203,6 +201,8 @@ FailExit:
 
 void siowrap_wait_events(siowrap_p s)
 {
+	if (!s) return;
+
 	soundio_wait_events(s->soundio);
 	if (!s->device || !s->outstream)
 	{
@@ -222,8 +222,7 @@ void siowrap_destroy(siowrap_p s)
 	free(s);
 }
 
-
-#if defined(_WIN32) || defined(__MINGW32__)
+#ifdef _WIN32
 #include<Windows.h>
 
 // And some GUID are never implemented (Ignoring the INITGUID define)
@@ -272,5 +271,4 @@ extern const IID IID_ISimpleAudioVolume = {
 	//MIDL_INTERFACE("87ce5498-68d6-44e5-9215-6da47ef883d8")
 	0x87ce5498, 0x68d6, 0x44e5,{ 0x92, 0x15, 0x6d, 0xa4, 0x7e, 0xf8, 0x83, 0xd8 }
 };
-
-#endif
+#endif // _WIN32
