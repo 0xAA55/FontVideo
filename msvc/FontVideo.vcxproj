@@ -144,7 +144,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>avcodec.lib;avutil.lib;avformat.lib;swscale.lib;swresample.lib;libsoundio.lib;rttimer.lib;stdatomic_msvc.lib;dictionary.lib;ole32.lib;user32.lib;gdi32.lib;opengl32.lib;glew32s.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>avcodec.lib;avutil.lib;avformat.lib;swscale.lib;swresample.lib;libsoundio.lib;rttimer.lib;stdatomic_msvc.lib;dictionary.lib;ole32.lib;user32.lib;gdi32.lib;opengl32.lib;shell32.lib;glew32s.lib;glfw3_mt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <LargeAddressAware>true</LargeAddressAware>
     </Link>
   </ItemDefinitionGroup>
@@ -164,7 +164,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>avcodec.lib;avutil.lib;avformat.lib;swscale.lib;swresample.lib;libsoundio.lib;rttimer.lib;stdatomic_msvc.lib;dictionary.lib;ole32.lib;user32.lib;gdi32.lib;opengl32.lib;glew32s.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>avcodec.lib;avutil.lib;avformat.lib;swscale.lib;swresample.lib;libsoundio.lib;rttimer.lib;stdatomic_msvc.lib;dictionary.lib;ole32.lib;user32.lib;gdi32.lib;opengl32.lib;shell32.lib;glew32s.lib;glfw3_mt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <LargeAddressAware>true</LargeAddressAware>
     </Link>
   </ItemDefinitionGroup>
@@ -197,7 +197,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>false</GenerateDebugInformation>
-      <AdditionalDependencies>avcodec.lib;avutil.lib;avformat.lib;swscale.lib;swresample.lib;libsoundio.lib;rttimer.lib;stdatomic_msvc.lib;dictionary.lib;ole32.lib;user32.lib;gdi32.lib;opengl32.lib;glew32s.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>avcodec.lib;avutil.lib;avformat.lib;swscale.lib;swresample.lib;libsoundio.lib;rttimer.lib;stdatomic_msvc.lib;dictionary.lib;ole32.lib;user32.lib;gdi32.lib;opengl32.lib;shell32.lib;glew32s.lib;glfw3_mt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <LargeAddressAware>true</LargeAddressAware>
       <SetChecksum>true</SetChecksum>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
@@ -244,7 +244,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>false</GenerateDebugInformation>
-      <AdditionalDependencies>avcodec.lib;avutil.lib;avformat.lib;swscale.lib;swresample.lib;libsoundio.lib;rttimer.lib;stdatomic_msvc.lib;dictionary.lib;ole32.lib;user32.lib;gdi32.lib;opengl32.lib;glew32s.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>avcodec.lib;avutil.lib;avformat.lib;swscale.lib;swresample.lib;libsoundio.lib;rttimer.lib;stdatomic_msvc.lib;dictionary.lib;ole32.lib;user32.lib;gdi32.lib;opengl32.lib;shell32.lib;glew32s.lib;glfw3_mt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <LargeAddressAware>true</LargeAddressAware>
       <SetChecksum>true</SetChecksum>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
