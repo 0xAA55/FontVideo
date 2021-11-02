@@ -59,7 +59,9 @@ typedef struct fontvideo_struct
     int do_audio_output;
     int do_colored_output;
     uint32_t output_w, output_h;
-    double avg_rendering_time_consuming;
+    int allow_opengl;
+    void *opengl_context;
+    void *opengl_data;
 
     uint32_t font_w, font_h;
     UniformBitmap_p font_matrix;
@@ -67,6 +69,8 @@ typedef struct fontvideo_struct
     uint32_t font_mat_h;
     size_t font_code_count;
     uint32_t *font_codes;
+
+    int prepared;
 
     fontvideo_frame_p frames;
     fontvideo_frame_p frame_last;
@@ -78,6 +82,7 @@ typedef struct fontvideo_struct
     uint32_t precached_frame_count;
     uint32_t rendering_frame_count;
     uint32_t rendered_frame_count;
+    double avg_rendering_time_consuming;
 
     char *utf8buf;
     size_t utf8buf_size;
@@ -103,6 +108,8 @@ fontvideo_p fv_create
     double start_timestamp
 );
 
+int fv_allow_opengl(fontvideo_p fv);
+int fv_show_prepare(fontvideo_p fv);
 int fv_show(fontvideo_p fv);
 int fv_render(fontvideo_p fv);
 void fv_destroy(fontvideo_p fv);

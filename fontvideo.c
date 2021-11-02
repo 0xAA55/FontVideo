@@ -1,5 +1,9 @@
 #include"fontvideo.h"
 
+#if defined(FONTVIDEO_ALLOW_OPENGL)
+#include<GL/glew.h>
+#endif
+
 #include<stdlib.h>
 #include<locale.h>
 #include<assert.h>
@@ -12,9 +16,27 @@
 #endif
 
 #if defined(_WIN32) || defined(__MINGW32__)
+#define IS_WINDOWS 1
+
+#if defined(FONTVIDEO_ALLOW_OPENGL)
+#include<GL/wglew.h>
+#endif
+
 #include <Windows.h>
 
 #define SUBDIR "\\"
+
+static void PrintLastError(FILE *fp)
+{
+    wchar_t *wbuf = NULL;
+    FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER |
+        FORMAT_MESSAGE_FROM_SYSTEM, NULL, GetLastError(), 0, (LPWSTR)&wbuf, 0, NULL);
+    if (wbuf)
+    {
+        fputws(wbuf, fp);
+        LocalFree(wbuf);
+    }
+}
 
 static void init_console(fontvideo_p fv)
 {
@@ -47,14 +69,22 @@ static void set_console_color(fontvideo_p fv, int clr)
 {
     switch (clr)
     {
-    case 0: strcat(fv->utf8buf, "\x1b[1;0m");  break;
-    case 1: strcat(fv->utf8buf, "\x1b[1;31m"); break;
-    case 2: strcat(fv->utf8buf, "\x1b[1;32m"); break;
-    case 3: strcat(fv->utf8buf, "\x1b[1;33m"); break;
-    case 4: strcat(fv->utf8buf, "\x1b[1;34m"); break;
-    case 5: strcat(fv->utf8buf, "\x1b[1;35m"); break;
-    case 6: strcat(fv->utf8buf, "\x1b[1;36m"); break;
-    case 7: strcat(fv->utf8buf, "\x1b[1;37m"); break;
+    case 000: strcat(fv->utf8buf, "\x1b[0;0m");  break;
+    case 001: strcat(fv->utf8buf, "\x1b[0;31m"); break;
+    case 002: strcat(fv->utf8buf, "\x1b[0;32m"); break;
+    case 003: strcat(fv->utf8buf, "\x1b[0;33m"); break;
+    case 004: strcat(fv->utf8buf, "\x1b[0;34m"); break;
+    case 005: strcat(fv->utf8buf, "\x1b[0;35m"); break;
+    case 006: strcat(fv->utf8buf, "\x1b[0;36m"); break;
+    case 007: strcat(fv->utf8buf, "\x1b[0;37m"); break;
+    case 010: strcat(fv->utf8buf, "\x1b[1;0m"); break;
+    case 011: strcat(fv->utf8buf, "\x1b[1;31m"); break;
+    case 012: strcat(fv->utf8buf, "\x1b[1;32m"); break;
+    case 013: strcat(fv->utf8buf, "\x1b[1;33m"); break;
+    case 014: strcat(fv->utf8buf, "\x1b[1;34m"); break;
+    case 015: strcat(fv->utf8buf, "\x1b[1;35m"); break;
+    case 016: strcat(fv->utf8buf, "\x1b[1;36m"); break;
+    case 017: strcat(fv->utf8buf, "\x1b[1;37m"); break;
     }
 }
 
@@ -63,7 +93,125 @@ static void yield()
     if (!SwitchToThread()) Sleep(1);
 }
 
+#if defined(FONTVIDEO_ALLOW_OPENGL)
+typedef struct glctx_struct
+{
+    fontvideo_p fv;
+    HWND hWnd;
+    HDC hDC;
+    HGLRC hGLRC;
+    atomic_int lock;
+}glctx_t, *glctx_p;
+
+static void glctx_Destroy(glctx_p ctx)
+{
+    if (ctx)
+    {
+        if (ctx->hGLRC) wglDeleteContext(ctx->hGLRC);
+        if (ctx->hDC) ReleaseDC(ctx->hWnd, ctx->hDC);
+        if (ctx->hWnd) DestroyWindow(ctx->hWnd);
+        free(ctx);
+    }
+}
+
+static LRESULT CALLBACK glctx_WndProc(HWND hWnd, UINT Msg, WPARAM wp, LPARAM lp)
+{
+    switch (Msg)
+    {
+    case WM_CREATE:
+        if (1)
+        {
+            CREATESTRUCT *cs = (void *)lp;
+            SetWindowLongPtr(hWnd, 0, (LONG_PTR)cs->lpCreateParams);
+            return 0;
+        }
+    case WM_DESTROY:
+        SetWindowLongPtr(hWnd, 0, 0);
+        return 0;
+    default:
+        return DefWindowProc(hWnd, Msg, wp, lp);
+    }
+}
+
+static glctx_p glctx_Create(fontvideo_p fv)
+{
+    glctx_p ctx = NULL;
+    int PixelFormat;
+    WNDCLASSW wc = {0};
+    ATOM ca = 0;
+    PIXELFORMATDESCRIPTOR pfd = {0};
+
+    ctx = calloc(1, sizeof ctx[0]);
+    if (!ctx)
+    {
+        goto FailExit;
+    }
+    ctx->fv = fv;
+
+    wc.lpfnWndProc = glctx_WndProc;
+    wc.cbWndExtra = sizeof ctx;
+    wc.hInstance = GetModuleHandle(NULL);
+    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.lpszClassName = L"FontVideoOpenGLContextWindow";
+    ca = RegisterClassW(&wc);
+    ctx->hWnd = CreateWindowExW(0, (LPWSTR)(ca), L"FontVideo OpenGL Context Window", WS_DISABLED | WS_MAXIMIZE, 0, 0, 1919, 810, NULL, NULL, wc.hInstance, ctx);
+
+    pfd.nSize = sizeof pfd;
+    pfd.nVersion = 1;
+    pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_GENERIC_ACCELERATED;
+    pfd.iPixelType = PFD_TYPE_RGBA;
+    pfd.cColorBits = 32;
+    pfd.cDepthBits = 0;
+    pfd.cStencilBits = 0;
+    pfd.iLayerType = PFD_MAIN_PLANE;
+
+    ctx->hDC = GetDC(ctx->hWnd);
+    PixelFormat = ChoosePixelFormat(ctx->hDC, &pfd);
+    if (!SetPixelFormat(ctx->hDC, PixelFormat, &pfd))
+    {
+        fprintf(fv->log_fp, "SetPixelFormat() failed: ");
+        PrintLastError(fv->log_fp);
+        goto FailExit;
+    }
+
+    ctx->hGLRC = wglCreateContext(ctx->hDC);
+    if (!ctx->hGLRC)
+    {
+        fprintf(fv->log_fp, "wglCreateContext() failed: ");
+        PrintLastError(fv->log_fp);
+        goto FailExit;
+    }
+
+    return ctx;
+FailExit:
+    glctx_Destroy(ctx);
+    return NULL;
+}
+
+static void glctx_MakeCurrent(glctx_p ctx)
+{
+    assert(ctx);
+    while (atomic_exchange(&ctx->lock, 1)) yield();
+    if (!wglMakeCurrent(ctx->hDC, ctx->hGLRC))
+    {
+        fprintf(ctx->fv->log_fp, "wglMakeCurrent() failed: ");
+        PrintLastError(ctx->fv->log_fp);
+    }
+}
+
+static void glctx_UnMakeCurrent(glctx_p ctx)
+{
+    wglMakeCurrent(NULL, NULL);
+    atomic_exchange(&ctx->lock, 0);
+}
+
+#endif
+
 #else // For non-Win32 appliction, assume it's linux/unix and runs in terminal
+
+#if defined(FONTVIDEO_ALLOW_OPENGL)
+#include <GL/glxew.h>
+#endif
 
 #define SUBDIR "/"
 
@@ -82,14 +230,22 @@ static void set_console_color(fontvideo_p fv, int clr)
 {
     switch (clr)
     {
-    case 0: strcat(fv->utf8buf, "\x1B[1;0m" );  break;
-    case 1: strcat(fv->utf8buf, "\x1B[1;31m"); break;
-    case 2: strcat(fv->utf8buf, "\x1B[1;32m"); break;
-    case 3: strcat(fv->utf8buf, "\x1B[1;33m"); break;
-    case 4: strcat(fv->utf8buf, "\x1B[1;34m"); break;
-    case 5: strcat(fv->utf8buf, "\x1B[1;35m"); break;
-    case 6: strcat(fv->utf8buf, "\x1B[1;36m"); break;
-    case 7: strcat(fv->utf8buf, "\x1B[1;37m"); break;
+    case 000: strcat(fv->utf8buf, "\x1b[0;0m");  break;
+    case 001: strcat(fv->utf8buf, "\x1b[0;31m"); break;
+    case 002: strcat(fv->utf8buf, "\x1b[0;32m"); break;
+    case 003: strcat(fv->utf8buf, "\x1b[0;33m"); break;
+    case 004: strcat(fv->utf8buf, "\x1b[0;34m"); break;
+    case 005: strcat(fv->utf8buf, "\x1b[0;35m"); break;
+    case 006: strcat(fv->utf8buf, "\x1b[0;36m"); break;
+    case 007: strcat(fv->utf8buf, "\x1b[0;37m"); break;
+    case 010: strcat(fv->utf8buf, "\x1b[1;0m"); break;
+    case 011: strcat(fv->utf8buf, "\x1b[1;31m"); break;
+    case 012: strcat(fv->utf8buf, "\x1b[1;32m"); break;
+    case 013: strcat(fv->utf8buf, "\x1b[1;33m"); break;
+    case 014: strcat(fv->utf8buf, "\x1b[1;34m"); break;
+    case 015: strcat(fv->utf8buf, "\x1b[1;35m"); break;
+    case 016: strcat(fv->utf8buf, "\x1b[1;36m"); break;
+    case 017: strcat(fv->utf8buf, "\x1b[1;37m"); break;
     }
 }
 
@@ -98,8 +254,523 @@ static void yield()
     sched_yield();
 }
 
+#if defined(FONTVIDEO_ALLOW_OPENGL)
+typedef struct glctx_struct
+{
+    int unused;
+}glctx_t, *glctx_p;
+
+static void glctx_Destroy(glctx_p ctx)
+{
+    free(ctx);
+}
+
+static glctx_p glctx_Create(fontvideo_p fv)
+{
+    fprintf(fv->log_fp, "Could not create OpenGL context, not implemented for this platform.\n");
+    return NULL;
+}
+
+static void glctx_MakeCurrent(glctx_p ctx)
+{
+}
+
+static void glctx_UnMakeCurrent(glctx_p ctx)
+{
+}
+#endif
 
 #endif
+
+#if defined(FONTVIDEO_ALLOW_OPENGL)
+typedef struct opengl_data_struct
+{
+    GLuint PBO_src;
+    GLuint src_texture;
+    int src_width;
+    int src_height;
+
+    GLuint FBO_match;
+    GLuint match_texture;
+    int match_width;
+    int match_height;
+    GLuint match_shader;
+
+    GLuint FBO_final;
+    GLuint PBO_final;
+    GLuint PBO_final_c;
+    GLuint final_texture;
+    GLuint final_texture_c;
+    int final_width;
+    int final_height;
+    GLuint final_shader;
+
+    GLuint font_matrix_texture;
+
+    GLuint Quad_VAO;
+}opengl_data_t, *opengl_data_p;
+
+static GLuint create_shader_program(FILE *compiler_output, const char *vs_code, const char *gs_code, const char *fs_code)
+{
+    GLuint program = glCreateProgram();
+    GLint success = 0;
+    GLint log_length;
+
+    if (vs_code)
+    {
+        const char *codes[] = {vs_code};
+        const GLint lengths[] = {(GLint)strlen(vs_code)};
+        GLuint vs;
+
+        vs = glCreateShader(GL_VERTEX_SHADER);
+        glShaderSource(vs, 1, codes, lengths);
+        glCompileShader(vs);
+        glAttachShader(program, vs);
+        glDeleteShader(vs);
+    }
+
+    if (gs_code)
+    {
+        const char *codes[] = {gs_code};
+        const GLint lengths[] = {(GLint)strlen(gs_code)};
+        GLuint gs;
+
+        gs = glCreateShader(GL_GEOMETRY_SHADER);
+        glShaderSource(gs, 1, codes, lengths);
+        glCompileShader(gs);
+        glAttachShader(program, gs);
+        glDeleteShader(gs);
+    }
+
+    if (fs_code)
+    {
+        const char *codes[] = {fs_code};
+        const GLint lengths[] = {(GLint)strlen(fs_code)};
+        GLuint fs;
+
+        fs = glCreateShader(GL_FRAGMENT_SHADER);
+        glShaderSource(fs, 1, codes, lengths);
+        glCompileShader(fs);
+        glAttachShader(program, fs);
+        glDeleteShader(fs);
+    }
+
+    glLinkProgram(program);
+    
+    glGetProgramiv(program, GL_INFO_LOG_LENGTH, &log_length);
+    if (log_length)
+    {
+        char *log_info = calloc((size_t)log_length + 1, 1);
+        if (log_info)
+        {
+            glGetInfoLogARB(program, log_length, &log_length, log_info);
+            fputs(log_info, compiler_output);
+            free(log_info);
+        }
+    }
+
+    glGetObjectParameterivARB(program, GL_LINK_STATUS, &success);
+    if (!success) goto FailExit;
+
+    return program;
+FailExit:
+    glDeleteProgram(program);
+    return 0;
+}
+
+#endif
+
+int fv_allow_opengl(fontvideo_p fv)
+{
+#if !defined(FONTVIDEO_ALLOW_OPENGL)
+    fprintf(fv->log_fp, "FONTVIDEO_ALLOW_OPENGL not defined when compiling, giving up using OpenGL.\n");
+    return 0;
+#else
+    glctx_p glctx = NULL;
+    opengl_data_p gld = NULL;
+    size_t size;
+    void *MapPtr;
+    char *VersionStr = NULL;
+    GLuint quad_vbo = 0;
+    GLuint pbo_font_matrix = 0;
+    GLint match_width = 0;
+    GLint match_height = 0;
+    GLint max_tex_size;
+    GLint max_fbo_width;
+    GLint max_fbo_height;
+    GLint Location;
+    struct Quad_Vertex_Struct
+    {
+        float PosX;
+        float PosY;
+    }*Quad_Vertex = NULL;
+
+    fv->allow_opengl = 1;
+
+    fv->opengl_context = glctx = glctx_Create(fv);
+    if (!glctx) goto FailExit;
+
+    fv->opengl_data = gld = calloc(1, sizeof gld[0]);
+    if (!gld)
+    {
+        fprintf(fv->log_fp, "%s.\n", strerror(errno));
+        goto FailExit;
+    }
+
+    glctx_MakeCurrent(glctx);
+    glewInit();
+
+    VersionStr = (char*)glGetString(GL_VERSION);
+    fprintf(fv->log_fp, "OpenGL version: %s.\n", VersionStr);
+
+    if (!GLEW_VERSION_3_3)
+    {
+        fprintf(fv->log_fp, "OpenGL 3.3 not supported, the minimum requirement not meet.\n");
+        goto FailExit;
+    }
+
+    glGenFramebuffers(1, &gld->FBO_match);
+    glGenFramebuffers(1, &gld->FBO_final);
+
+    gld->src_width = fv->output_w * fv->font_w;
+    gld->src_height = fv->output_w * fv->font_w;
+    size = gld->src_width * gld->src_height * 4;
+
+    glGenTextures(1, &gld->src_texture);
+    glBindTexture(GL_TEXTURE_2D, gld->src_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, gld->src_width, gld->src_height, 0, GL_BGRA, GL_UNSIGNED_BYTE, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    glGenBuffers(1, &gld->PBO_src);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, gld->PBO_src);
+    glBufferData(GL_PIXEL_UNPACK_BUFFER, size, NULL, GL_STATIC_DRAW);
+
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_tex_size);
+    assert(max_tex_size >= 1024);
+    glGetIntegerv(GL_MAX_FRAMEBUFFER_WIDTH, &max_fbo_width);
+    glGetIntegerv(GL_MAX_FRAMEBUFFER_HEIGHT, &max_fbo_height);
+    if (max_tex_size > max_fbo_width) max_tex_size = max_fbo_width;
+    if (max_tex_size > max_fbo_height) max_tex_size = max_fbo_height;
+
+    size = (size_t)fv->font_matrix->Width * fv->font_matrix->Height * 4;
+
+    glGenBuffers(1, &pbo_font_matrix);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_font_matrix);
+    glBufferData(GL_PIXEL_UNPACK_BUFFER, size, NULL, GL_STATIC_DRAW);
+    MapPtr = glMapBuffer(GL_PIXEL_UNPACK_BUFFER, GL_WRITE_ONLY);
+    memcpy(MapPtr, fv->font_matrix->BitmapData, size);
+    glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
+
+    glGenTextures(1, &gld->font_matrix_texture);
+    glBindTexture(GL_TEXTURE_2D, gld->font_matrix_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, fv->font_matrix->Width, fv->font_matrix->Height, 0, GL_BGRA, GL_UNSIGNED_BYTE, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    glDeleteBuffers(1, &pbo_font_matrix);
+
+    match_width = fv->output_w;
+    match_height = fv->output_h;
+    size = (size_t)match_width * match_height;
+    while (size < fv->font_code_count)
+    {
+        if (match_width > match_height)
+        {
+            int new_height = match_height + fv->output_h;
+            if (new_height > max_tex_size) break;
+            match_height = new_height;
+        }
+        else
+        {
+            int new_width = match_width + fv->output_w;
+            if (new_width > max_tex_size) break;
+            match_width = new_width;
+        }
+        size = (size_t)match_width * match_height;
+    }
+
+    gld->match_width = match_width;
+    gld->match_height = match_height;
+
+    glGenTextures(1, &gld->match_texture);
+    glBindTexture(GL_TEXTURE_2D, gld->match_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, gld->match_width, gld->match_height, 0, GL_RGBA, GL_FLOAT, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    gld->match_shader = create_shader_program(fv->log_fp,
+        "#version 130\n"
+        "in vec2 Position;"
+        "out vec2 TexCoord;"
+        "void main()"
+        "{"
+        "   TexCoord = (Position + vec2(1)) * vec2(0.5);"
+        "   gl_Position = vec4(Position, 0.0, 1.0);"
+        "}"
+        ,
+        NULL,
+        "#version 130\n"
+        "in vec2 TexCoord;"
+        "out vec4 Output;"
+        "uniform ivec2 Resolution;"
+        "uniform sampler2D FontMatrix;"
+        "uniform int FontMatrixCodeCount;"
+        "uniform ivec2 FontMatrixSize;"
+        "uniform ivec2 GlyphSize;"
+        "uniform ivec2 ConsoleSize;"
+        "uniform sampler2D SrcColor;"
+        "void main()"
+        "{"
+        "   ivec2 FragCoord = ivec2(TexCoord * vec2(Resolution));"
+        "   ivec2 InstDim = Resolution / ConsoleSize;"
+        "   ivec2 InstCoord = FragCoord / ConsoleSize;"
+        "   ivec2 ConsoleCoord = FragCoord - (InstCoord * ConsoleSize);"
+        "   int InstCount = InstDim.x * InstDim.y;"
+        "   int InstID = InstCoord.x + InstCoord.y * InstDim.x;"
+        "   int BestGlyph = 0;"
+        "   float BestScore = -99999.0;"
+        "   ivec2 GraphicalCoord = ConsoleCoord * GlyphSize;"
+        "   for(int i = 0; i < FontMatrixCodeCount; i += InstCount)"
+        "   {"
+        "       int Glyph = (i + InstID) % FontMatrixCodeCount;"
+        "       float Score = 0.0;"
+        "       float SrcMod = 0.0;"
+        "       float GlyphMod = 0.0;"
+        "       ivec2 GlyphPos = ivec2(Glyph % FontMatrixSize.x, Glyph / FontMatrixSize.x) * GlyphSize;"
+        "       for(int y = 0; y < GlyphSize.y; y++)"
+        "       {"
+        "           for(int x = 0; x < GlyphSize.x; x++)"
+        "           {"
+        "               ivec2 src_xy = ivec2(x, y);"
+        "               ivec2 gly_xy = ivec2(x, y);"
+        "               float SrcLum = length(texelFetch(SrcColor, GraphicalCoord + src_xy, 0).rgb);"
+        "               float GlyphLum = length(texelFetch(FontMatrix, GlyphPos + gly_xy, 0).rgb);"
+        "               SrcLum -= 0.5;"
+        "               GlyphLum -= 0.5;"
+        "               Score += SrcLum * GlyphLum;"
+        "               SrcMod += SrcLum * SrcLum;"
+        "               GlyphMod += GlyphLum * GlyphLum;"
+        "           }"
+        "       }"
+        "       if (SrcMod >= 0.000001) Score /= sqrt(SrcMod);"
+        "       if (GlyphMod >= 0.000001) Score /= sqrt(GlyphMod);"
+        "       if (Score >= BestScore)"
+        "       {"
+        "           BestScore = Score;"
+        "           BestGlyph = Glyph;"
+        "       }"
+        "   }"
+        "   Output = vec4(BestScore, float(BestGlyph), 0.0, 0.0);"
+        "}"
+    );
+    if (!gld->match_shader) goto FailExit;
+
+    gld->final_width = fv->output_w;
+    gld->final_height = fv->output_h;
+    size = (size_t)gld->final_width * gld->final_height;
+
+    glGenTextures(1, &gld->final_texture);
+    glBindTexture(GL_TEXTURE_2D, gld->final_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32I, gld->final_width, gld->final_height, 0, GL_RED_INTEGER, GL_INT, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    glGenTextures(1, &gld->final_texture_c);
+    glBindTexture(GL_TEXTURE_2D, gld->final_texture_c);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8I, gld->final_width, gld->final_height, 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    glGenBuffers(1, &gld->PBO_final);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, gld->PBO_final);
+    glBufferData(GL_PIXEL_PACK_BUFFER, size * 4, NULL, GL_STATIC_DRAW);
+
+    glGenBuffers(1, &gld->PBO_final_c);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, gld->PBO_final_c);
+    glBufferData(GL_PIXEL_PACK_BUFFER, size, NULL, GL_STATIC_DRAW);
+
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+
+    gld->final_shader = create_shader_program(fv->log_fp,
+        "#version 130\n"
+        "in vec2 Position;"
+        "out vec2 TexCoord;"
+        "void main()"
+        "{"
+        "   TexCoord = (Position + vec2(1)) * vec2(0.5);"
+        "   gl_Position = vec4(Position, 0.0, 1.0);"
+        "}"
+        ,
+        NULL,
+        "#version 130\n"
+        "in vec2 TexCoord;"
+        "out int Output;"
+        "out int Color;"
+        "uniform ivec2 Resolution;"
+        "uniform ivec2 MatchTexSize;"
+        "uniform sampler2D MatchTex;"
+        "uniform int FontMatrixCodeCount;"
+        "uniform ivec2 GlyphSize;"
+        "uniform ivec2 ConsoleSize;"
+        "uniform sampler2D SrcColor;"
+        "void main()"
+        "{"
+        "    ivec2 FragCoord = ivec2(TexCoord * vec2(Resolution));"
+        "    ivec2 InstMatrix = MatchTexSize / ConsoleSize;"
+        "    float BestScore = 0.0;"
+        "    int BestGlyph = 0;"
+        "    for(int y = 0; y < InstMatrix.y; y++)"
+        "    {"
+        "        for(int x = 0; x < InstMatrix.x; x++)"
+        "        {"
+        "            ivec2 xy = ivec2(x, y);"
+        "            vec4 Data = texelFetch(MatchTex, xy * ConsoleSize + FragCoord, 0);"
+        "            if (Data.x > BestScore)"
+        "            {"
+        "                BestScore = Data.x;"
+        "                BestGlyph = int(Data.y);"
+        "            }"
+        "        }"
+        "    }"
+        "    ivec3 AvrColor = ivec3(0);"
+        "    ivec2 BaseCoord = FragCoord * GlyphSize;"
+        "    int PixelCount = 0;"
+        "    bool Bright;"
+        "    for(int y = 0; y < GlyphSize.y; y++)"
+        "    {"
+        "        for(int x = 0; x < GlyphSize.x; x++)"
+        "        {"
+        "            ivec2 xy = ivec2(x, y);"
+        "            AvrColor += ivec3(texelFetch(SrcColor, xy + BaseCoord, 0).rgb * vec3(255));"
+        "            PixelCount ++;"
+        "        }"
+        "    }"
+        "    AvrColor /= PixelCount;"
+        "    Bright = (AvrColor.r + AvrColor.g + AvrColor.b > 127 + 127 + 127);"
+        "    Output = BestGlyph;"
+        "    Color ="
+        "        ((AvrColor.b & 0x80) >> 5) |"
+        "        ((AvrColor.g & 0x80) >> 6) |"
+        "        ((AvrColor.r & 0x80) >> 7) |"
+        "        (Bright ? 0x08 : 0x00);"
+        "}"
+    );
+    if (!gld->final_shader) goto FailExit;
+
+    glGenVertexArrays(1, &gld->Quad_VAO);
+    glBindVertexArray(gld->Quad_VAO);
+
+    size = 4 * sizeof Quad_Vertex[0];
+
+    glGenBuffers(1, &quad_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, quad_vbo);
+    glBufferData(GL_ARRAY_BUFFER, size, NULL, GL_STATIC_DRAW);
+    Quad_Vertex = glMapBuffer(GL_ARRAY_BUFFER, GL_WRITE_ONLY);
+    Quad_Vertex[0].PosX = -1; Quad_Vertex[0].PosY = -1;
+    Quad_Vertex[1].PosX = 1; Quad_Vertex[1].PosY = -1;
+    Quad_Vertex[2].PosX = -1; Quad_Vertex[2].PosY = 1;
+    Quad_Vertex[3].PosX = 1; Quad_Vertex[3].PosY = 1;
+    glUnmapBuffer(GL_ARRAY_BUFFER);
+
+    Location = glGetAttribLocation(gld->match_shader, "Position");
+    assert(Location >= 0);
+    glEnableVertexAttribArray(Location);
+    glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], NULL);
+    glVertexAttribDivisor(Location, 0);
+
+    Location = glGetAttribLocation(gld->final_shader, "Position");
+    assert(Location >= 0);
+    glEnableVertexAttribArray(Location);
+    glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], NULL);
+    glVertexAttribDivisor(Location, 0);
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+
+    glActiveTexture(GL_TEXTURE0 + 0); glBindTexture(GL_TEXTURE_2D, gld->font_matrix_texture);
+    glActiveTexture(GL_TEXTURE0 + 1); glBindTexture(GL_TEXTURE_2D, gld->src_texture);
+    glActiveTexture(GL_TEXTURE0 + 2); glBindTexture(GL_TEXTURE_2D, gld->match_texture);
+    glActiveTexture(GL_TEXTURE0 + 3); glBindTexture(GL_TEXTURE_2D, gld->final_texture);
+    glActiveTexture(GL_TEXTURE0 + 4); glBindTexture(GL_TEXTURE_2D, gld->final_texture_c);
+
+    glUseProgram(gld->match_shader);
+
+    Location = glGetUniformLocation(gld->match_shader, "Resolution"); // assert(Location >= 0);
+    glUniform2i(Location, gld->match_width, gld->match_height);
+
+    Location = glGetUniformLocation(gld->match_shader, "FontMatrix"); // assert(Location >= 0);
+    glUniform1i(Location, 0);
+
+    Location = glGetUniformLocation(gld->match_shader, "FontMatrixCodeCount"); // assert(Location >= 0);
+    glUniform1i(Location, (GLint)fv->font_code_count);
+
+    Location = glGetUniformLocation(gld->match_shader, "FontMatrixSize"); // assert(Location >= 0);
+    glUniform2i(Location, fv->font_mat_w, fv->font_mat_h);
+
+    Location = glGetUniformLocation(gld->match_shader, "GlyphSize"); // assert(Location >= 0);
+    glUniform2i(Location, fv->font_w, fv->font_h);
+
+    Location = glGetUniformLocation(gld->match_shader, "ConsoleSize"); // assert(Location >= 0);
+    glUniform2i(Location, fv->output_w, fv->output_h);
+
+    Location = glGetUniformLocation(gld->match_shader, "SrcColor"); // assert(Location >= 0);
+    glUniform1i(Location, 1);
+
+    glUseProgram(gld->final_shader);
+
+    Location = glGetUniformLocation(gld->final_shader, "Resolution"); // assert(Location >= 0);
+    glUniform2i(Location, gld->final_width, gld->final_height);
+
+    Location = glGetUniformLocation(gld->final_shader, "MatchTexSize"); // assert(Location >= 0);
+    glUniform2i(Location, gld->match_width, gld->match_height);
+
+    Location = glGetUniformLocation(gld->final_shader, "MatchTex"); // assert(Location >= 0);
+    glUniform1i(Location, 2);
+
+    Location = glGetUniformLocation(gld->final_shader, "FontMatrixCodeCount"); // assert(Location >= 0);
+    glUniform1i(Location, (GLint)fv->font_code_count);
+
+    Location = glGetUniformLocation(gld->final_shader, "GlyphSize"); // assert(Location >= 0);
+    glUniform2i(Location, fv->font_w, fv->font_h);
+
+    Location = glGetUniformLocation(gld->final_shader, "ConsoleSize"); // assert(Location >= 0);
+    glUniform2i(Location, fv->output_w, fv->output_h);
+
+    Location = glGetUniformLocation(gld->final_shader, "SrcColor"); // assert(Location >= 0);
+    glUniform1i(Location, 1);
+
+    glUseProgram(0);
+
+    glctx_UnMakeCurrent(glctx);
+    return 1;
+FailExit:
+    if (glctx) glctx_UnMakeCurrent(glctx);
+    free(Quad_Vertex);
+    fv->opengl_context = NULL;
+    fv->opengl_data = NULL;
+    glctx_Destroy(glctx);
+    free(gld);
+    fprintf(fv->log_fp, "Giving up using OpenGL.\n");
+    fv->allow_opengl = 0;
+    return 0;
+#endif
+}
 
 static int get_thread_id()
 {
@@ -681,19 +1352,14 @@ FailExit:
     return NULL;
 }
 
-// Render the frame from bitmap into font char codes. One of the magic happens here.
-static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
+static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
 {
     int fy, fw, fh;
     UniformBitmap_p fm = fv->font_matrix;
     uint32_t font_pixel_count = fv->font_w * fv->font_h;
 
-    if (f->rendered) return;
-
     fw = f->w;
     fh = f->h;
-
-    f->rendering_start_time = rttimer_gettime(&fv->tmr);
 
     // OpenMP will automatically disable recursive multi-threading
 #pragma omp parallel for
@@ -710,6 +1376,7 @@ static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
             size_t best_code_index = 0;
             int best_fmx = 0, best_fmy = 0;
             float best_score = -9999999.0f;
+            int bright = 0;
             sx = fx * fv->font_w;
 
             // Replace the rightmost char to newline
@@ -727,6 +1394,7 @@ static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
                 {
                     int srcx = fmx * fv->font_w;
                     float score = 0;
+                    float src_normalize = 0;
                     float font_normalize = 0;
 
                     // Compare each pixels and collect the scores.
@@ -746,15 +1414,17 @@ static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
                                 (uint32_t)src_pixel->u8[2] * src_pixel->u8[2])) / 441.672955930063709849498817084f;
                             float font_lum = font_pixel->u8[0] ? 1.0f : 0.0f;
 
-                            // font_lum -= 0.5;
-                            // src_lum = sqrtf(src_lum);
                             src_lum -= 0.5;
+                            font_lum -= 0.5;
+                            // src_lum = sqrtf(src_lum);
                             score += src_lum * font_lum;
+                            src_normalize += src_lum * src_lum;
                             font_normalize += font_lum * font_lum;
                         }
                     }
 
                     // Do vector normalize
+                    if (src_normalize >= 0.000001f) score /= sqrtf(src_normalize);
                     if (font_normalize >= 0.000001f) score /= sqrtf(font_normalize);
                     if (score > best_score)
                     {
@@ -793,13 +1463,119 @@ static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
             avr_g /= font_pixel_count;
             avr_r /= font_pixel_count;
 
-            // Encode the color into 3-bit BGR
+            bright = (avr_r + avr_g + avr_b > 127 + 127 + 127);
+
+            // Encode the color into 3-bit BGR with 1-bit brightness
             f->c_row[fy][fx] =
                 ((avr_b & 0x80) >> 5) |
                 ((avr_g & 0x80) >> 6) |
-                ((avr_r & 0x80) >> 7);
+                ((avr_r & 0x80) >> 7) |
+                (bright ? 0x08 : 0x00);
         }
     }
+}
+
+static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
+{
+    opengl_data_p gld = fv->opengl_data;
+    GLuint FBO_match = gld->FBO_match;
+    GLuint FBO_final = gld->FBO_final;
+    size_t size;
+    void *MapPtr;
+    GLenum DrawBuffers[2];
+    GLuint src_texture = gld->src_texture;
+    GLuint match_texture = gld->match_texture;
+    GLuint final_texture = gld->final_texture;
+    GLuint final_texture_c = gld->final_texture_c;
+    int x, y;
+
+    glctx_MakeCurrent(fv->opengl_context);
+
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO_match);
+
+    size = (size_t)f->raw_w * f->raw_h * 4;
+
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, gld->PBO_src);
+    MapPtr = glMapBuffer(GL_PIXEL_UNPACK_BUFFER, GL_WRITE_ONLY);
+    memcpy(MapPtr, f->raw_data, size);
+    glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
+
+    glActiveTexture(GL_TEXTURE0 + 1);
+    glBindTexture(GL_TEXTURE_2D, src_texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, f->raw_w, f->raw_h, 0, GL_BGRA, GL_UNSIGNED_BYTE, 0);
+
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, match_texture, 0);
+    DrawBuffers[0] = GL_COLOR_ATTACHMENT0;
+    glDrawBuffers(1, DrawBuffers);
+    glViewport(0, 0, gld->match_width, gld->match_height);
+    glBindFragDataLocation(gld->match_shader, 0, "Output");
+
+    assert(glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
+
+    glUseProgram(gld->match_shader);
+    glBindVertexArray(gld->Quad_VAO);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO_final);
+
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, final_texture, 0);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, final_texture_c, 0);
+    DrawBuffers[0] = GL_COLOR_ATTACHMENT0;
+    DrawBuffers[1] = GL_COLOR_ATTACHMENT1;
+    glDrawBuffers(2, DrawBuffers);
+    glViewport(0, 0, gld->final_width, gld->final_height);
+    glBindFragDataLocation(gld->final_shader, 0, "Output");
+    glBindFragDataLocation(gld->final_shader, 1, "Color");
+
+    assert(glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
+
+    glUseProgram(gld->final_shader);
+    glBindVertexArray(gld->Quad_VAO);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    glActiveTexture(GL_TEXTURE0 + 3);
+    glBindTexture(GL_TEXTURE_2D, final_texture);
+    size = (size_t)gld->final_width * gld->final_height * 4;
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, gld->PBO_final);
+    glGetTexImage(GL_TEXTURE_2D, 0, GL_RED_INTEGER, GL_INT, NULL);
+    MapPtr = glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
+    memcpy(f->data, MapPtr, size);
+    glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+
+    glActiveTexture(GL_TEXTURE0 + 4);
+    glBindTexture(GL_TEXTURE_2D, final_texture_c);
+    size = (size_t)gld->final_width * gld->final_height;
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, gld->PBO_final_c);
+    glGetTexImage(GL_TEXTURE_2D, 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, NULL);
+    MapPtr = glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
+    memcpy(f->c_data, MapPtr, size);
+    glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+
+    glctx_UnMakeCurrent(fv->opengl_context);
+
+    for (y = 0; y < f->h; y++)
+    {
+        for (x = 0; x < f->w - 1; x++)
+        {
+            f->row[y][x] = fv->font_codes[f->row[y][x]];
+        }
+        f->row[y][x] = '\n';
+    }
+}
+
+// Render the frame from bitmap into font char codes. One of the magic happens here.
+static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
+{
+    if (f->rendered) return;
+
+    f->rendering_start_time = rttimer_gettime(&fv->tmr);
+
+#if defined(FONTVIDEO_ALLOW_OPENGL)
+    if (fv->allow_opengl && fv->opengl_context && fv->opengl_data) do_gpu_render(fv, f); else
+#endif
+    do_cpu_render(fv, f);
 
     f->rendering_time_consuming = rttimer_gettime(&fv->tmr) - f->rendering_start_time;
 
@@ -811,8 +1587,6 @@ static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
     unlock_frame(fv);
 
 #ifdef DEBUG_OUTPUT_SCREEN
-#pragma comment (lib, "user32.lib")
-#pragma comment (lib, "gdi32.lib")
     if (1)
     {
         HDC hDC = GetDC(NULL);
@@ -1285,8 +2059,6 @@ fontvideo_p fv_create(char *input_file, FILE *log_fp, int do_verbose_log, FILE *
     fontvideo_p fv = NULL;
     avdec_video_format_t vf = {0};
     avdec_audio_format_t af = {0};
-    int i;
-    int tc = omp_get_max_threads();
 
     fv = calloc(1, sizeof fv[0]);
     if (!fv) return fv;
@@ -1343,6 +2115,21 @@ fontvideo_p fv_create(char *input_file, FILE *log_fp, int do_verbose_log, FILE *
     rttimer_init(&fv->tmr, 1);
     rttimer_settime(&fv->tmr, start_timestamp);
 
+    return fv;
+FailExit:
+    fv_destroy(fv);
+    return NULL;
+}
+
+int fv_show_prepare(fontvideo_p fv)
+{
+    int i;
+    int tc = omp_get_max_threads();
+
+    if (!fv) return 0;
+
+    if (fv->prepared) return 1;
+
     if (fv->real_time_play)
     {
         do_decode(fv, 0);
@@ -1358,18 +2145,18 @@ fontvideo_p fv_create(char *input_file, FILE *log_fp, int do_verbose_log, FILE *
 
         rttimer_start(&fv->tmr);
 
-        if (do_audio_output)
+        if (fv->do_audio_output)
         {
-            fv->sio = siowrap_create(log_fp, SoundIoFormatFloat32NE, af.sample_rate, fv_on_write_sample);
+            fv->sio = siowrap_create(fv->log_fp, SoundIoFormatFloat32NE, fv->av->decoded_af.sample_rate, fv_on_write_sample);
             if (!fv->sio) goto FailExit;
             fv->sio->userdata = fv;
         }
     }
 
-    return fv;
+    fv->prepared = 1;
+    return 1;
 FailExit:
-    fv_destroy(fv);
-    return NULL;
+    return 0;
 }
 
 int fv_show(fontvideo_p fv)
@@ -1379,36 +2166,76 @@ int fv_show(fontvideo_p fv)
 
     if (!fv) return 0;
 
+    if (!fv->prepared) fv_show_prepare(fv);
+
     fv->real_time_play = 1;
 
-#pragma omp parallel for // ordered
-    for(i = 0; i < tc; i++)
+    if (fv->allow_opengl && fv->opengl_context && fv->opengl_data)
     {
-        if (i == 0) for (;;)
+#pragma omp parallel sections
         {
-            if (!do_decode(fv, 1))
-                yield();
 
-            if (fv->tailed) break;
-        }
-        else if (i == 1) for (;;)
-        {
-            if (fv->rendered_frame_count)
+#pragma omp section
+            for (;;)
             {
-                if (!output_rendered_video(fv, rttimer_gettime(&fv->tmr)));
-                yield();
+                if (!do_decode(fv, 1))
+                    yield();
+
+                if (fv->tailed) break;
             }
 
-            if (fv->tailed && !fv->precached_frame_count) break;
+#pragma omp section
+            for (;;)
+            {
+                if (fv->rendered_frame_count)
+                {
+                    if (!output_rendered_video(fv, rttimer_gettime(&fv->tmr)));
+                    yield();
+                }
+
+                if (fv->tailed && !fv->precached_frame_count) break;
+            }
+
+#pragma omp section
+            for (;;)
+            {
+                fontvideo_frame_p f = get_frame_and_render(fv);
+                if (!f) yield();
+
+                if (fv->tailed && fv->rendered_frame_count >= fv->precached_frame_count) break;
+            }
         }
-        else for (;;)
+    }
+    else
+    {
+#pragma omp parallel for // ordered
+        for (i = 0; i < tc; i++)
         {
-            fontvideo_frame_p f = get_frame_and_render(fv);
-            if (!f) yield();
+            if (i == 0) for (;;)
+            {
+                if (!do_decode(fv, 1))
+                    yield();
 
-            if (fv->tailed && fv->rendered_frame_count >= fv->precached_frame_count) break;
+                if (fv->tailed) break;
+            }
+            else if (i == 1) for (;;)
+            {
+                if (fv->rendered_frame_count)
+                {
+                    if (!output_rendered_video(fv, rttimer_gettime(&fv->tmr)));
+                    yield();
+                }
+
+                if (fv->tailed && !fv->precached_frame_count) break;
+            }
+            else for (;;)
+            {
+                fontvideo_frame_p f = get_frame_and_render(fv);
+                if (!f) yield();
+
+                if (fv->tailed && fv->rendered_frame_count >= fv->precached_frame_count) break;
+            }
         }
-
     }
     while (fv->audios || fv->audio_last) yield();
     return 1;

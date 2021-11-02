@@ -20,6 +20,7 @@ void usage(char *argv0)
         "\t-s : [Optional] Size of the output, default is to detect the size of the console window, or 80x25 if failed.\n"
         "\t-b : Only do white-black output.\n"
         "\t-S : [Optional] Set the playback start time of seconds.\n"
+        "\t--no-opengl: [Optional] Do not use OpenGL to accelerate rendering.\n"
         "", argv0, argv0);
 }
 
@@ -37,6 +38,7 @@ int main(int argc, char **argv)
     int output_width = 80;
     int output_height = 25;
     int no_colors = 0;
+    int no_opengl = 0;
 
 #if defined(_WIN32) || defined(__MINGW32__)
 #pragma comment(lib, "user32.lib")
@@ -130,6 +132,11 @@ int main(int argc, char **argv)
                 if (++i >= argc) goto BadUsageExit;
                 start_sec = atof(argv[i++]);
             }
+            else if (!strcmp(argv[i], "--no-opengl"))
+            {
+                i++;
+                no_opengl = 1;
+            }
             else
             {
                 fprintf(stderr, "Unknown option: %s\n", argv[i]);
@@ -160,8 +167,9 @@ int main(int argc, char **argv)
 
     fv = fv_create(input_file, stderr, verbose, fp_out, output_width, output_height, prerender_secs, !mute, start_sec);
     if (!fv) goto FailExit;
-
     if (no_colors) fv->do_colored_output = 0;
+
+    if (!no_opengl) fv_allow_opengl(fv);
 
     if (real_time_show)
         fv_show(fv);
