@@ -2,6 +2,7 @@
 
 #ifdef FONTVIDEO_ALLOW_OPENGL
 #include<GL/glew.h>
+#include<GLFW/glfw3.h>
 #endif
 
 #include<stdlib.h>
@@ -56,9 +57,12 @@ static void init_console(fontvideo_p fv)
     if (fv->real_time_play)
     {
         GetConsoleMode(hConsole, &ConMode);
-        if (!SetConsoleMode(hConsole, ConMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING))
+        if (!(ConMode & ENABLE_VIRTUAL_TERMINAL_PROCESSING))
         {
-            fv->do_old_console_output = 1;
+            if (!SetConsoleMode(hConsole, ConMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING))
+            {
+                fv->do_old_console_output = 1;
+            }
         }
     }
 }
@@ -97,124 +101,12 @@ static void yield()
     if (!SwitchToThread()) Sleep(1);
 }
 
-#ifdef FONTVIDEO_ALLOW_OPENGL
-typedef struct glctx_struct
-{
-    fontvideo_p fv;
-    HWND hWnd;
-    HDC hDC;
-    HGLRC hGLRC;
-    atomic_int lock;
-}glctx_t, *glctx_p;
-
-static void glctx_Destroy(glctx_p ctx)
-{
-    if (ctx)
-    {
-        if (ctx->hGLRC) wglDeleteContext(ctx->hGLRC);
-        if (ctx->hDC) ReleaseDC(ctx->hWnd, ctx->hDC);
-        if (ctx->hWnd) DestroyWindow(ctx->hWnd);
-        free(ctx);
-    }
-}
-
-static LRESULT CALLBACK glctx_WndProc(HWND hWnd, UINT Msg, WPARAM wp, LPARAM lp)
-{
-    switch (Msg)
-    {
-    case WM_CREATE:
-        if (1)
-        {
-            CREATESTRUCT *cs = (void *)lp;
-            SetWindowLongPtr(hWnd, 0, (LONG_PTR)cs->lpCreateParams);
-            return 0;
-        }
-    case WM_DESTROY:
-        SetWindowLongPtr(hWnd, 0, 0);
-        return 0;
-    default:
-        return DefWindowProc(hWnd, Msg, wp, lp);
-    }
-}
-
-static glctx_p glctx_Create(fontvideo_p fv)
-{
-    glctx_p ctx = NULL;
-    int PixelFormat;
-    WNDCLASSW wc = {0};
-    ATOM ca = 0;
-    PIXELFORMATDESCRIPTOR pfd = {0};
-
-    ctx = calloc(1, sizeof ctx[0]);
-    if (!ctx)
-    {
-        goto FailExit;
-    }
-    ctx->fv = fv;
-
-    wc.lpfnWndProc = glctx_WndProc;
-    wc.cbWndExtra = sizeof ctx;
-    wc.hInstance = GetModuleHandle(NULL);
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
-    wc.lpszClassName = L"FontVideoOpenGLContextWindow";
-    ca = RegisterClassW(&wc);
-    ctx->hWnd = CreateWindowExW(0, (LPWSTR)(ca), L"FontVideo OpenGL Context Window", WS_DISABLED | WS_MAXIMIZE, 0, 0, 1919, 810, NULL, NULL, wc.hInstance, ctx);
-
-    pfd.nSize = sizeof pfd;
-    pfd.nVersion = 1;
-    pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_GENERIC_ACCELERATED;
-    pfd.iPixelType = PFD_TYPE_RGBA;
-    pfd.cColorBits = 32;
-    pfd.cDepthBits = 0;
-    pfd.cStencilBits = 0;
-    pfd.iLayerType = PFD_MAIN_PLANE;
-
-    ctx->hDC = GetDC(ctx->hWnd);
-    PixelFormat = ChoosePixelFormat(ctx->hDC, &pfd);
-    if (!SetPixelFormat(ctx->hDC, PixelFormat, &pfd))
-    {
-        fprintf(fv->log_fp, "SetPixelFormat() failed: ");
-        PrintLastError(fv->log_fp);
-        goto FailExit;
-    }
-
-    ctx->hGLRC = wglCreateContext(ctx->hDC);
-    if (!ctx->hGLRC)
-    {
-        fprintf(fv->log_fp, "wglCreateContext() failed: ");
-        PrintLastError(fv->log_fp);
-        goto FailExit;
-    }
-
-    return ctx;
-FailExit:
-    glctx_Destroy(ctx);
-    return NULL;
-}
-
-static void glctx_MakeCurrent(glctx_p ctx)
-{
-    assert(ctx);
-    while (atomic_exchange(&ctx->lock, 1)) yield();
-    if (!wglMakeCurrent(ctx->hDC, ctx->hGLRC))
-    {
-        fprintf(ctx->fv->log_fp, "wglMakeCurrent() failed: ");
-        PrintLastError(ctx->fv->log_fp);
-    }
-}
-
-static void glctx_UnMakeCurrent(glctx_p ctx)
-{
-    wglMakeCurrent(NULL, NULL);
-    atomic_exchange(&ctx->lock, 0);
-}
-
-#endif
-
 #else // For non-Win32 appliction, assume it's linux/unix and runs in terminal
 
 #ifdef FONTVIDEO_ALLOW_OPENGL
 #include <GL/glxew.h>
+#include <GL/glx.h>
+#include <unistd.h>
 #endif
 
 #include <sched.h>
@@ -263,35 +155,86 @@ static void yield()
     sched_yield();
 }
 
+#endif
+
 #ifdef FONTVIDEO_ALLOW_OPENGL
+
+static atomic_int GLFWInitialized = 0;
+
 typedef struct glctx_struct
 {
-    int unused;
+    fontvideo_p fv;
+    GLFWwindow *window;
+    atomic_int lock;
 }glctx_t, *glctx_p;
+
+static void glfw_error_callback(int error, const char *description)
+{
+    fprintf(stderr, "GLFW Error: (%d) %s\n", error, description);
+}
 
 static void glctx_Destroy(glctx_p ctx)
 {
-    free(ctx);
+    if (ctx)
+    {
+        if (ctx->window) glfwDestroyWindow(ctx->window);
+        free(ctx);
+
+        if (atomic_fetch_sub(&GLFWInitialized, 1) == 1)
+        {
+            glfwTerminate();
+        }
+    }
 }
 
 static glctx_p glctx_Create(fontvideo_p fv)
 {
-    fprintf(fv->log_fp, "Could not create OpenGL context, not implemented for this platform.\n");
+    glctx_p ctx = NULL;
+
+    if (!atomic_fetch_add(&GLFWInitialized, 1))
+    {
+        if (!glfwInit())
+        {
+            fprintf(fv->log_fp, "OpenGL Renderer: glfwInit() failed.\n");
+            goto FailExit;
+        }
+
+        glfwSetErrorCallback(glfw_error_callback);
+    }
+
+    ctx = calloc(1, sizeof ctx[0]);
+    if (!ctx)
+    {
+        goto FailExit;
+    }
+    ctx->fv = fv;
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    ctx->window = glfwCreateWindow(640, 480, "", NULL, NULL);
+    if (!ctx->window)
+    {
+        fprintf(fv->log_fp, "OpenGL Renderer: glfwCreateWindow() failed.\n");
+    }
+
+    return ctx;
+FailExit:
+    glctx_Destroy(ctx);
     return NULL;
 }
 
 static void glctx_MakeCurrent(glctx_p ctx)
 {
+    while (atomic_exchange(&ctx->lock, 1)) yield();
+    glfwMakeContextCurrent(ctx->window);
 }
 
 static void glctx_UnMakeCurrent(glctx_p ctx)
 {
+    glfwMakeContextCurrent(NULL);
+    atomic_exchange(&ctx->lock, 0);
 }
-#endif
 
-#endif
-
-#ifdef FONTVIDEO_ALLOW_OPENGL
 typedef struct opengl_data_struct
 {
     GLuint PBO_src;
@@ -414,6 +357,8 @@ int fv_allow_opengl(fontvideo_p fv)
     {
         float PosX;
         float PosY;
+        float TexU;
+        float TexV;
     }*Quad_Vertex = NULL;
 
     fv->allow_opengl = 1;
@@ -434,9 +379,9 @@ int fv_allow_opengl(fontvideo_p fv)
     VersionStr = (char*)glGetString(GL_VERSION);
     fprintf(fv->log_fp, "OpenGL version: %s.\n", VersionStr);
 
-    if (!GLEW_VERSION_3_3)
+    if (!GLEW_VERSION_3_0)
     {
-        fprintf(fv->log_fp, "OpenGL 3.3 not supported, the minimum requirement not meet.\n");
+        fprintf(fv->log_fp, "OpenGL 3.0 not supported, the minimum requirement not meet.\n");
         goto FailExit;
     }
 
@@ -525,12 +470,13 @@ int fv_allow_opengl(fontvideo_p fv)
 
     gld->match_shader = create_shader_program(fv->log_fp,
         "#version 130\n"
-        "in vec2 Position;"
+        "in vec2 vPosition;"
+        "in vec2 vTexCoord;"
         "out vec2 TexCoord;"
         "void main()"
         "{"
-        "   TexCoord = (Position + vec2(1)) * vec2(0.5);"
-        "   gl_Position = vec4(Position, 0.0, 1.0);"
+        "   TexCoord = vTexCoord;"
+        "   gl_Position = vec4(vPosition, 0.0, 1.0);"
         "}"
         ,
         NULL,
@@ -596,7 +542,7 @@ int fv_allow_opengl(fontvideo_p fv)
     if (1)
     {
         int InstCount = InstMatrixWidth * InstMatrixHeight;
-        int LoopCount = fv->font_code_count / InstCount;
+        int LoopCount = (int)(fv->font_code_count / InstCount);
         fprintf(fv->log_fp, "Expected loop count '%d' for total code count %zu (%d tests run in a pass).\n", LoopCount, fv->font_code_count, InstCount);
     }
 
@@ -634,12 +580,13 @@ int fv_allow_opengl(fontvideo_p fv)
 
     gld->final_shader = create_shader_program(fv->log_fp,
         "#version 130\n"
-        "in vec2 Position;"
+        "in vec2 vPosition;"
+        "in vec2 vTexCoord;"
         "out vec2 TexCoord;"
         "void main()"
         "{"
-        "   TexCoord = (Position + vec2(1)) * vec2(0.5);"
-        "   gl_Position = vec4(Position, 0.0, 1.0);"
+        "   TexCoord = vTexCoord;"
+        "   gl_Position = vec4(vPosition, 0.0, 1.0);"
         "}"
         ,
         NULL,
@@ -714,17 +661,27 @@ int fv_allow_opengl(fontvideo_p fv)
     Quad_Vertex[1].PosX = 1; Quad_Vertex[1].PosY = -1;
     Quad_Vertex[2].PosX = -1; Quad_Vertex[2].PosY = 1;
     Quad_Vertex[3].PosX = 1; Quad_Vertex[3].PosY = 1;
+    Quad_Vertex[0].TexU = 0; Quad_Vertex[0].TexV = 0;
+    Quad_Vertex[1].TexU = 1; Quad_Vertex[1].TexV = 0;
+    Quad_Vertex[2].TexU = 0; Quad_Vertex[2].TexV = 1;
+    Quad_Vertex[3].TexU = 1; Quad_Vertex[3].TexV = 1;
     glUnmapBuffer(GL_ARRAY_BUFFER);
 
-    Location = glGetAttribLocation(gld->match_shader, "Position"); // assert(Location >= 0);
+    Location = glGetAttribLocation(gld->match_shader, "vPosition"); // assert(Location >= 0);
     glEnableVertexAttribArray(Location);
-    glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], NULL);
-    glVertexAttribDivisor(Location, 0);
+    glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], (void*)0);
 
-    Location = glGetAttribLocation(gld->final_shader, "Position"); // assert(Location >= 0);
+    Location = glGetAttribLocation(gld->match_shader, "vTexCoord"); // assert(Location >= 0);
     glEnableVertexAttribArray(Location);
-    glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], NULL);
-    glVertexAttribDivisor(Location, 0);
+    glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], (void *)8);
+
+    Location = glGetAttribLocation(gld->final_shader, "vPosition"); // assert(Location >= 0);
+    glEnableVertexAttribArray(Location);
+    glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], (void *)0);
+
+    Location = glGetAttribLocation(gld->final_shader, "vTexCoord"); // assert(Location >= 0);
+    glEnableVertexAttribArray(Location);
+    glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], (void *)8);
 
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
@@ -1724,7 +1681,6 @@ static fontvideo_frame_p get_frame_and_render(fontvideo_p fv)
 
 static int output_rendered_video(fontvideo_p fv, double timestamp)
 {
-    char* utf8buf = fv->utf8buf;
     fontvideo_frame_p cur = NULL, next = NULL, prev = NULL;
     int cur_color = 0;
     int discard_threshold = 0;
@@ -1871,7 +1827,7 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                                 (Color & 0x08 ? FOREGROUND_INTENSITY : 0);
                             if (!Attr) Attr = FOREGROUND_INTENSITY;
                             dst_row[x].Attributes = Attr;
-                            dst_row[x].Char.UnicodeChar = Char;
+                            dst_row[x].Char.UnicodeChar = (WCHAR)Char;
                         }
                     }
                     done_output = WriteConsoleOutputW(GetStdHandle(STD_OUTPUT_HANDLE), ci, BufferSize, BufferCoord, &sr);
@@ -1880,9 +1836,9 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
 #endif
             if (!done_output)
             {
-                char *u8chr = utf8buf;
+                char *u8chr = fv->utf8buf;
                 cur_color = cur->c_row[0][0];
-                memset(utf8buf, 0, fv->utf8buf_size);
+                memset(fv->utf8buf, 0, fv->utf8buf_size);
                 set_console_color(fv, cur_color);
                 u8chr = strchr(u8chr, 0);
                 for (y = 0; y < (int)cur->h; y++)
@@ -1903,7 +1859,7 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                     }
                 }
                 *u8chr = '\0';
-                fputs(utf8buf, fv->graphics_out_fp);
+                fputs(fv->utf8buf, fv->graphics_out_fp);
                 done_output = 1;
             }
         }
@@ -1911,13 +1867,13 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
         {
             for (y = 0; y < (int)cur->h; y++)
             {
-                char *u8chr = utf8buf;
+                char *u8chr = fv->utf8buf;
                 for (x = 0; x < (int)cur->w; x++)
                 {
                     u32toutf8(&u8chr, cur->row[y][x]);
                 }
                 *u8chr = '\0';
-                fputs(utf8buf, fv->graphics_out_fp);
+                fputs(fv->utf8buf, fv->graphics_out_fp);
             }
         }
 
