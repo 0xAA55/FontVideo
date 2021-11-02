@@ -75,9 +75,13 @@ typedef struct fontvideo_struct
     fontvideo_frame_p frames;
     fontvideo_frame_p frame_last;
     atomic_int frame_lock;
+
+#ifndef FONTVIDEO_NO_SOUND
     fontvideo_audio_p audios;
     fontvideo_audio_p audio_last;
     atomic_int audio_lock;
+#endif
+
     uint32_t frame_count;
     uint32_t precached_frame_count;
     uint32_t rendering_frame_count;
@@ -91,7 +95,9 @@ typedef struct fontvideo_struct
 
     int tailed;
     avdec_p av;
+#ifndef FONTVIDEO_NO_SOUND
     siowrap_p sio;
+#endif
     rttimer_t tmr;
 }fontvideo_t, *fontvideo_p;
 

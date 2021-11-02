@@ -1,6 +1,6 @@
 #include"fontvideo.h"
 
-#if defined(FONTVIDEO_ALLOW_OPENGL)
+#ifdef FONTVIDEO_ALLOW_OPENGL
 #include<GL/glew.h>
 #endif
 
@@ -11,14 +11,13 @@
 #include<omp.h>
 #include<threads.h>
 
-#if defined(_DEBUG)
+#ifdef _DEBUG
 #   define DEBUG_OUTPUT_TO_SCREEN 0
 #endif
 
-#if defined(_WIN32) || defined(__MINGW32__)
-#define IS_WINDOWS 1
+#ifdef _WIN32
 
-#if defined(FONTVIDEO_ALLOW_OPENGL)
+#ifdef FONTVIDEO_ALLOW_OPENGL
 #include<GL/wglew.h>
 #endif
 
@@ -93,7 +92,7 @@ static void yield()
     if (!SwitchToThread()) Sleep(1);
 }
 
-#if defined(FONTVIDEO_ALLOW_OPENGL)
+#ifdef FONTVIDEO_ALLOW_OPENGL
 typedef struct glctx_struct
 {
     fontvideo_p fv;
@@ -209,16 +208,21 @@ static void glctx_UnMakeCurrent(glctx_p ctx)
 
 #else // For non-Win32 appliction, assume it's linux/unix and runs in terminal
 
-#if defined(FONTVIDEO_ALLOW_OPENGL)
+#ifdef FONTVIDEO_ALLOW_OPENGL
 #include <GL/glxew.h>
 #endif
+
+#include <sched.h>
 
 #define SUBDIR "/"
 
 static void init_console(fontvideo_p fv)
 {
-    setlocale(LC_ALL, "");
-    fv->output_utf8 = 1;
+    if (fv->need_chcp)
+    {
+        setlocale(LC_ALL, "");
+        fv->output_utf8 = 1;
+    }
 }
 
 static void set_cursor_xy(int x, int y)
@@ -254,7 +258,7 @@ static void yield()
     sched_yield();
 }
 
-#if defined(FONTVIDEO_ALLOW_OPENGL)
+#ifdef FONTVIDEO_ALLOW_OPENGL
 typedef struct glctx_struct
 {
     int unused;
@@ -282,7 +286,7 @@ static void glctx_UnMakeCurrent(glctx_p ctx)
 
 #endif
 
-#if defined(FONTVIDEO_ALLOW_OPENGL)
+#ifdef FONTVIDEO_ALLOW_OPENGL
 typedef struct opengl_data_struct
 {
     GLuint PBO_src;
@@ -382,8 +386,8 @@ FailExit:
 
 int fv_allow_opengl(fontvideo_p fv)
 {
-#if !defined(FONTVIDEO_ALLOW_OPENGL)
-    fprintf(fv->log_fp, "FONTVIDEO_ALLOW_OPENGL not defined when compiling, giving up using OpenGL.\n");
+#ifndef FONTVIDEO_ALLOW_OPENGL
+    fprintf(fv->log_fp, "Macro `FONTVIDEO_ALLOW_OPENGL` not defined when compiling, giving up using OpenGL.\n");
     return 0;
 #else
     glctx_p glctx = NULL;
@@ -688,14 +692,12 @@ int fv_allow_opengl(fontvideo_p fv)
     Quad_Vertex[3].PosX = 1; Quad_Vertex[3].PosY = 1;
     glUnmapBuffer(GL_ARRAY_BUFFER);
 
-    Location = glGetAttribLocation(gld->match_shader, "Position");
-    assert(Location >= 0);
+    Location = glGetAttribLocation(gld->match_shader, "Position"); // assert(Location >= 0);
     glEnableVertexAttribArray(Location);
     glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], NULL);
     glVertexAttribDivisor(Location, 0);
 
-    Location = glGetAttribLocation(gld->final_shader, "Position");
-    assert(Location >= 0);
+    Location = glGetAttribLocation(gld->final_shader, "Position"); // assert(Location >= 0);
     glEnableVertexAttribArray(Location);
     glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], NULL);
     glVertexAttribDivisor(Location, 0);
@@ -791,32 +793,10 @@ static void lock_frame(fontvideo_p fv)
     {
         if (fv->verbose_threading)
         {
-            ; // fprintf(stderr, "Frame link list locked by %d. (%d)\n", readout, cur_id);
+            readout; // fprintf(stderr, "Frame link list locked by %d. (%d)\n", readout, cur_id);
         }
         yield();
     }
-}
-
-// Try lock, if already locked by others, immediately returns 0. If acquired the lock, returns non-zero.
-static int try_lock_frame(fontvideo_p fv)
-{
-    atomic_int expected = 0;
-    atomic_int cur_id = get_thread_id();
-
-    // First, do a non-atomic test for a quick peek.
-    if (fv->frame_lock) goto NotAcquired;
-
-    // Then, perform the actual atomic operation for acquiring the lock.
-    if (atomic_compare_exchange_strong(&fv->frame_lock, &expected, cur_id))
-    {
-        return 1;
-    }
-NotAcquired:
-    if (fv->verbose_threading)
-    {
-        fprintf(stderr, "Frame link list locked by %d, try lock failed. (%d)\n", expected, cur_id);
-    }
-    return 0;
 }
 
 static void unlock_frame(fontvideo_p fv)
@@ -824,6 +804,7 @@ static void unlock_frame(fontvideo_p fv)
     atomic_exchange(&fv->frame_lock, 0);
 }
 
+#ifndef FONTVIDEO_NO_SOUND
 // Same mechanism for locking audio link list.
 static void lock_audio(fontvideo_p fv)
 {
@@ -843,6 +824,7 @@ static void unlock_audio(fontvideo_p fv)
 {
     atomic_exchange(&fv->audio_lock, 0);
 }
+#endif
 
 static void frame_delete(fontvideo_frame_p f)
 {
@@ -872,6 +854,7 @@ static void *move_ptr(void *ptr, ptrdiff_t step)
 // Create audio piece and copy the waveform
 static fontvideo_audio_p audio_create(void *samples, int channel_count, size_t num_samples_per_channel, double timestamp);
 
+#ifndef FONTVIDEO_NO_SOUND
 // Callback function for siowrap output sound to libsoundio
 static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count, void **pointers_per_channel, size_t *sample_pointer_steps, size_t samples_to_write_per_channel)
 {
@@ -893,9 +876,6 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
 
     // Only support for mono and stereo
     if (channel_count < 1 || channel_count > 2) return 0;
-
-    // Supress warning
-    sample_rate;
 
     // Initialize stereo pointers
     if (channel_count == 2)
@@ -1026,6 +1006,7 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
     }
     return total;
 }
+#endif
 
 // Convert 32-bit unicode into UTF-8 form one by one.
 // The UTF-8 output string pointer will be moved to the next position.
@@ -1219,15 +1200,15 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
     fv->font_codes = malloc(font_count_max * sizeof fv->font_codes[0]);
     if (!fv->font_codes)
     {
-        fprintf(log_fp, "Could not load font code file from '%s': '%s'\n", buf, strerror(errno));
+        fprintf(log_fp, "Could not allocate font codes: '%s'.\n", strerror(errno));
         goto FailExit;
     }
 
     snprintf(buf, sizeof buf, "%s"SUBDIR"%s", assets_dir, font_bmp);
-    fv->font_matrix = UB_CreateFromFile(buf, log_fp);
+    fv->font_matrix = UB_CreateFromFile((const char*)buf, log_fp);
     if (!fv->font_matrix)
     {
-        fprintf(log_fp, "Could not load font matrix bitmap file from '%s'\n", buf);
+        fprintf(log_fp, "Could not load font matrix bitmap file from '%s'.\n", buf);
         goto FailExit;
     }
 
@@ -1311,7 +1292,6 @@ static fontvideo_frame_p frame_create(fontvideo_p fv, uint32_t w, uint32_t h, do
     ptrdiff_t i;
     fontvideo_frame_p f = calloc(1, sizeof f[0]);
     if (!f) return f;
-    fv;
 
     f->timestamp = timestamp;
     f->w = w;
@@ -1374,7 +1354,10 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             uint32_t avr_r = 0, avr_g = 0, avr_b = 0;
             size_t cur_code_index = 0;
             size_t best_code_index = 0;
-            int best_fmx = 0, best_fmy = 0;
+#ifdef DEBUG_OUTPUT_SCREEN
+            int best_fmx = 0;
+            int best_fmy = 0;
+#endif
             float best_score = -9999999.0f;
             int bright = 0;
             sx = fx * fv->font_w;
@@ -1430,8 +1413,10 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                     {
                         best_score = score;
                         best_code_index = cur_code_index;
+#ifdef DEBUG_OUTPUT_SCREEN
                         best_fmx = fmx * fv->font_w;
                         best_fmy = fmy * fv->font_h;
+#endif
                     }
 
                     cur_code_index++;
@@ -1555,9 +1540,9 @@ static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
 
     glctx_UnMakeCurrent(fv->opengl_context);
 
-    for (y = 0; y < f->h; y++)
+    for (y = 0; y < (int)f->h; y++)
     {
-        for (x = 0; x < f->w - 1; x++)
+        for (x = 0; x < (int)f->w - 1; x++)
         {
             f->row[y][x] = fv->font_codes[f->row[y][x]];
         }
@@ -1572,7 +1557,7 @@ static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
 
     f->rendering_start_time = rttimer_gettime(&fv->tmr);
 
-#if defined(FONTVIDEO_ALLOW_OPENGL)
+#ifdef FONTVIDEO_ALLOW_OPENGL
     if (fv->allow_opengl && fv->opengl_context && fv->opengl_data) do_gpu_render(fv, f); else
 #endif
     do_cpu_render(fv, f);
@@ -1657,6 +1642,7 @@ Unlock:
     unlock_frame(fv);
 }
 
+#ifndef FONTVIDEO_NO_SOUND
 // Create the audio 
 static fontvideo_audio_p audio_create(void *samples, int channel_count, size_t num_samples_per_channel, double timestamp)
 {
@@ -1750,23 +1736,24 @@ static void locked_add_audio_to_fv(fontvideo_p fv, fontvideo_audio_p a)
 Unlock:
     unlock_audio(fv);
 }
+#endif
 
-static void fv_on_get_video(avdec_p av, void *bitmap, int width, int height, size_t pitch, double timestamp, enum AVPixelFormat pixel_format)
+static void fv_on_get_video(avdec_p av, void *bitmap, int width, int height, size_t pitch, double timestamp)
 {
     fontvideo_p fv = av->userdata;
-    fontvideo_frame_p f = frame_create(fv, fv->output_w, fv->output_h, timestamp, bitmap, width, height, pitch);
+    fontvideo_frame_p f;
+
+    f = frame_create(fv, fv->output_w, fv->output_h, timestamp, bitmap, width, height, pitch);
     if (!f)
     {
         return;
     }
     locked_add_frame_to_fv(fv, f);
-
-    pixel_format;
-    // printf("Get video data: %p, %d, %d, %zu, %lf, %d\n", bitmap, width, height, pitch, timestamp, pixel_format);
 }
 
-static void fv_on_get_audio(avdec_p av, void **samples_of_channel, int channel_count, size_t num_samples_per_channel, double timestamp, enum AVSampleFormat sample_fmt)
+static void fv_on_get_audio(avdec_p av, void **samples_of_channel, int channel_count, size_t num_samples_per_channel, double timestamp)
 {
+#ifndef FONTVIDEO_NO_SOUND
     fontvideo_p fv = av->userdata;
     fontvideo_audio_p a = NULL;
 
@@ -1778,9 +1765,7 @@ static void fv_on_get_audio(avdec_p av, void **samples_of_channel, int channel_c
         return;
     }
     locked_add_audio_to_fv(fv, a);
-
-    sample_fmt;
-    // printf("Get audio data: %p, %d, %zu, %lf, %d\n", samples_of_channel, channel_count, num_samples_per_channel, timestamp, sample_fmt);
+#endif
 }
 
 static fontvideo_frame_p get_frame_and_render(fontvideo_p fv)
@@ -2024,8 +2009,12 @@ static int do_decode(fontvideo_p fv, int keeprun)
         lock_frame(fv);
         while (!fv->tailed && (
             !fv->frame_last || (fv->frame_last && fv->frame_last->timestamp < target_timestamp) ||
+#ifndef FONTVIDEO_NO_SOUND
             (fv->do_audio_output &&
-            !fv->audio_last || (fv->audio_last && fv->audio_last->timestamp < target_timestamp))))
+            (!fv->audio_last || (fv->audio_last && fv->audio_last->timestamp < target_timestamp)))))
+#else
+            0))
+#endif
         {
             unlock_frame(fv);
             if (fv->verbose_threading)
@@ -2064,7 +2053,7 @@ fontvideo_p fv_create(char *input_file, FILE *log_fp, int do_verbose_log, FILE *
     if (!fv) return fv;
     fv->log_fp = log_fp;
     fv->verbose = do_verbose_log;
-#if defined(_DEBUG)
+#ifdef _DEBUG
     fv->verbose_threading = 1;
 #else
     fv->verbose_threading = 0;
@@ -2147,16 +2136,18 @@ int fv_show_prepare(fontvideo_p fv)
 
         if (fv->do_audio_output)
         {
+#ifndef FONTVIDEO_NO_SOUND
             fv->sio = siowrap_create(fv->log_fp, SoundIoFormatFloat32NE, fv->av->decoded_af.sample_rate, fv_on_write_sample);
-            if (!fv->sio) goto FailExit;
+            if (!fv->sio) return 0;
             fv->sio->userdata = fv;
+#else
+            fprintf(fv->log_fp, "`FONTVIDEO_NO_SOUND` is set so no sound API is called.\n");
+#endif
         }
     }
 
     fv->prepared = 1;
     return 1;
-FailExit:
-    return 0;
 }
 
 int fv_show(fontvideo_p fv)
@@ -2237,7 +2228,9 @@ int fv_show(fontvideo_p fv)
             }
         }
     }
+#ifndef FONTVIDEO_NO_SOUND
     while (fv->audios || fv->audio_last) yield();
+#endif
     return 1;
 }
 
@@ -2261,7 +2254,10 @@ void fv_destroy(fontvideo_p fv)
 {
     if (!fv) return;
 
+#ifndef FONTVIDEO_NO_SOUND
     siowrap_destroy(fv->sio);
+#endif
+
     free(fv->font_codes);
     UB_Free(&fv->font_matrix);
     avdec_close(&fv->av);
@@ -2273,12 +2269,14 @@ void fv_destroy(fontvideo_p fv)
         fv->frames = next;
     }
 
+#ifndef FONTVIDEO_NO_SOUND
     while (fv->audios)
     {
         fontvideo_audio_p next = fv->audios->next;
         audio_delete(fv->audios);
         fv->audios = next;
     }
+#endif
 
     free(fv->utf8buf);
     free(fv);
