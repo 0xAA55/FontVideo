@@ -107,6 +107,7 @@ fontvideo_p fv_create
     FILE *log_fp,
     int do_verbose_log,
     FILE *graphics_out_fp,
+    char *assets_meta_file,
     uint32_t x_resolution,
     uint32_t y_resolution,
     double precache_seconds,
