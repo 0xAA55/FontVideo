@@ -82,7 +82,7 @@ static uint32_t ARGB(uint8_t R, uint8_t G, uint8_t B, uint8_t A)
 	{
 		uint8_t u8[4];
 		uint32_t u32;
-	}Block = { B, G, R, A};
+	}Block = {{ B, G, R, A}};
 	return Block.u32;
 }
 
@@ -406,6 +406,17 @@ UniformBitmap_p UB_CreateFromFile(const char *FilePath, FILE *log_fp)
 						ReadInLineBuffer[ByteIndex + 0],
 						ReadInLineBuffer[ByteIndex + 3]);
 					if (ReadInLineBuffer[ByteIndex + 3]) HasAlpha = 1;
+				}
+			}
+			if (!HasAlpha)
+			{
+				for (y = 0; y < UB->Height; y++)
+				{
+					uint32_t *Row = UB->RowPointers[y];
+					for (x = 0; x < UB->Width; x++)
+					{
+						Row[x] &= 0xFF000000;
+					}
 				}
 			}
 			break;
