@@ -5,6 +5,13 @@
 #include<GLFW/glfw3.h>
 #endif
 
+#ifdef _WIN32
+#ifdef FONTVIDEO_ALLOW_OPENGL
+#include<GL/wglew.h>
+#endif
+#include<Windows.h>
+#endif
+
 #include<stdlib.h>
 #include<locale.h>
 #include<assert.h>
@@ -19,12 +26,6 @@
 #endif
 
 #ifdef _WIN32
-
-#ifdef FONTVIDEO_ALLOW_OPENGL
-#include<GL/wglew.h>
-#endif
-
-#include<Windows.h>
 
 #define SUBDIR "\\"
 
@@ -233,6 +234,7 @@ static void glctx_UnMakeCurrent(glctx_p ctx)
 {
     glfwMakeContextCurrent(NULL);
     atomic_exchange(&ctx->lock, 0);
+    glfwPollEvents();
 }
 
 typedef struct opengl_data_struct
