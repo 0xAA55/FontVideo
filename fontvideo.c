@@ -24,7 +24,6 @@
 #endif
 
 #include<Windows.h>
-#include<VersionHelpers.h>
 
 #define SUBDIR "\\"
 
