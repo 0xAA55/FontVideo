@@ -24,6 +24,7 @@
     <ClCompile Include="..\fontvideo.c" />
     <ClCompile Include="..\siowrap.c" />
     <ClCompile Include="..\unibmp.c" />
+    <ClCompile Include="..\utf.c" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\makefile" />
@@ -33,6 +34,7 @@
     <ClInclude Include="..\fontvideo.h" />
     <ClInclude Include="..\siowrap.h" />
     <ClInclude Include="..\unibmp.h" />
+    <ClInclude Include="..\utf.h" />
     <ClInclude Include="resource.h" />
   </ItemGroup>
   <ItemGroup>

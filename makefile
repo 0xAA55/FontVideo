@@ -4,7 +4,7 @@ CFLAGS=-std=c11 -Wall -O3 -flto -fopenmp -I. -Iinclude -DGLEW_STATIC -DFONTVIDEO
 LDLIBS=-lavformat -lavcodec -lavutil -lswresample -lswscale -lsoundio -lm -lGL -lGLU -Lrttimer -lrttimer -LC_dict -lcdict -fopenmp
 LDFLAGS=-O3
 
-OBJS=entry.o fontvideo.o avdec.o siowrap.o unibmp.o glew.o
+OBJS=entry.o fontvideo.o avdec.o siowrap.o unibmp.o utf.o glew.o
 
 all: fontvideo
 
