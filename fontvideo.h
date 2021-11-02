@@ -90,6 +90,11 @@ typedef struct fontvideo_struct
 
     char *utf8buf;
     size_t utf8buf_size;
+#if _WIN32
+    int do_old_console_output;
+    void *old_console_buffer;
+#endif
+
     atomic_int doing_decoding;
     atomic_int doing_output;
 
