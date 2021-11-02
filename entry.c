@@ -2,7 +2,7 @@
 
 #include"fontvideo.h"
 
-#if defined(_WIN32) || defined(__MINGW32__)
+#ifdef _WIN32
 #include<Windows.h>
 #endif
 
@@ -40,8 +40,7 @@ int main(int argc, char **argv)
     int no_colors = 0;
     int no_opengl = 0;
 
-#if defined(_WIN32) || defined(__MINGW32__)
-#pragma comment(lib, "user32.lib")
+#ifdef _WIN32
     if (1) // Try to detect console window size.
     {
         CONSOLE_SCREEN_BUFFER_INFO ConsoleInfo;
