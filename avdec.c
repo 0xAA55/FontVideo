@@ -187,6 +187,13 @@ int avdec_set_decoded_video_format(avdec_p av, avdec_video_format_p vf)
     if (!av->video_conv) goto FailExit;
     av->video_conv_frame = av_frame_alloc();
     if (!av->video_conv_frame) goto FailExit;
+
+#ifndef _WIN32
+    av->video_conv_frame->width = vf->width;
+    av->video_conv_frame->height = vf->height;
+    av->video_conv_frame->format = vf->pixel_format;
+    if (av_frame_get_buffer(av->video_conv_frame, 4) < 0) goto FailExit;
+#endif
     
     return 1;
 FailExit:
@@ -219,6 +226,7 @@ int avdec_set_decoded_audio_format(avdec_p av, avdec_audio_format_p af)
     av_opt_set_int(av->audio_conv, "in_channel_layout", av->decoded_af.channel_layout, 0);
     av_opt_set_int(av->audio_conv, "in_sample_rate", av->decoded_af.sample_rate, 0);
     av_opt_set_sample_fmt(av->audio_conv, "in_sample_fmt", av->decoded_af.sample_fmt, 0);
+
     av_opt_set_int(av->audio_conv, "out_channel_layout", af->channel_layout, 0);
     av_opt_set_int(av->audio_conv, "out_sample_rate", af->sample_rate, 0);
     av_opt_set_sample_fmt(av->audio_conv, "out_sample_fmt", af->sample_fmt, 0);
@@ -248,14 +256,24 @@ static void on_video_decoded(avdec_p av, pfn_on_get_video on_get_video)
     av->video_timestamp = time_position;
     if (av->video_conv)
     {
-        if (!sws_scale_frame(av->video_conv, av->video_conv_frame, av->frame))
+#ifdef _WIN32
+        if (sws_scale_frame(av->video_conv, av->video_conv_frame, av->frame) < 0)
         {
             fprintf(log_fp, "sws_scale_frame() failed on video stream %d.\n", av->video_index);
             return;
         }
+#else
+        // The API `sws_scale_frame()` is too new for my WSL2 debian now, can't link.
+        if (sws_scale(av->video_conv, (const uint8_t*const*)av->frame->data, av->frame->linesize, 0, av->frame->height,
+            av->video_conv_frame->data, av->video_conv_frame->linesize) < 0)
+        {
+            fprintf(log_fp, "sws_scale() failed on video stream %d.\n", av->video_index);
+            return;
+        }
+#endif
         f = av->video_conv_frame;
     }
-    on_get_video(av, f->data[0], f->width, f->height, f->linesize[0], time_position, f->format);
+    on_get_video(av, f->data[0], f->width, f->height, f->linesize[0], time_position);
 }
 
 static void on_audio_decoded(avdec_p av, pfn_on_get_audio on_get_audio)
@@ -284,11 +302,11 @@ static void on_audio_decoded(avdec_p av, pfn_on_get_audio on_get_audio)
         {
             goto FailExit;
         }
-        on_get_audio(av, av->audio_conv_data, av->audio_conv_channels, dst_samples, time_position, av->audio_conv_format.sample_fmt);
+        on_get_audio(av, av->audio_conv_data, av->audio_conv_channels, dst_samples, time_position);
     }
     else
     {
-        on_get_audio(av, (void **)f->data, f->channels, f->nb_samples, time_position, f->format);
+        on_get_audio(av, (void **)f->data, f->channels, f->nb_samples, time_position);
     }
     return;
 FailExit:
@@ -297,7 +315,6 @@ FailExit:
 
 int avdec_seek(avdec_p av, double timestamp)
 {
-    int rv = 0;
     int64_t seek_ts;
 
     if (!av || timestamp < 0) return 0;
