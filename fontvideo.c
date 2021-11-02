@@ -11,6 +11,8 @@
 #include<omp.h>
 #include<threads.h>
 
+#include"utf.h"
+
 #ifdef _DEBUG
 #   define DEBUG_OUTPUT_TO_SCREEN 0
 #endif
@@ -21,7 +23,8 @@
 #include<GL/wglew.h>
 #endif
 
-#include <Windows.h>
+#include<Windows.h>
+#include<VersionHelpers.h>
 
 #define SUBDIR "\\"
 
@@ -54,7 +57,10 @@ static void init_console(fontvideo_p fv)
     if (fv->real_time_play)
     {
         GetConsoleMode(hConsole, &ConMode);
-        SetConsoleMode(hConsole, ConMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        if (!SetConsoleMode(hConsole, ConMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING))
+        {
+            fv->do_old_console_output = 1;
+        }
     }
 }
 
@@ -554,6 +560,7 @@ int fv_allow_opengl(fontvideo_p fv)
         "   for(int i = 0; i < FontMatrixCodeCount; i += InstCount)"
         "   {"
         "       int Glyph = (i + InstID);"
+        "       if (Glyph >= FontMatrixCodeCount) break;"
         "       float Score = 0.0;"
         "       float SrcMod = 0.0;"
         "       float GlyphMod = 0.0;"
@@ -676,7 +683,7 @@ int fv_allow_opengl(fontvideo_p fv)
         "        for(int x = 0; x < GlyphSize.x; x++)"
         "        {"
         "            ivec2 xy = ivec2(x, y);"
-        "            AvrColor += ivec3(texelFetch(SrcColor, xy + BaseCoord, 0).rgb * vec3(255));"
+        "            AvrColor += ivec3(texelFetch(SrcColor, BaseCoord + xy, 0).rgb * vec3(255));"
         "            PixelCount ++;"
         "        }"
         "    }"
@@ -1023,166 +1030,6 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
 }
 #endif
 
-// Convert 32-bit unicode into UTF-8 form one by one.
-// The UTF-8 output string pointer will be moved to the next position.
-static void u32toutf8
-(
-    char **ppUTF8,
-    const uint32_t CharCode
-)
-{
-    char *pUTF8 = ppUTF8[0];
-
-    if (CharCode >= 0x4000000)
-    {
-        *pUTF8++ = 0xFC | ((CharCode >> 30) & 0x01);
-        *pUTF8++ = 0x80 | ((CharCode >> 24) & 0x3F);
-        *pUTF8++ = 0x80 | ((CharCode >> 18) & 0x3F);
-        *pUTF8++ = 0x80 | ((CharCode >> 12) & 0x3F);
-        *pUTF8++ = 0x80 | ((CharCode >> 6) & 0x3F);
-        *pUTF8++ = 0x80 | (CharCode & 0x3F);
-    }
-    else if (CharCode >= 0x200000)
-    {
-        *pUTF8++ = 0xF8 | ((CharCode >> 24) & 0x03);
-        *pUTF8++ = 0x80 | ((CharCode >> 18) & 0x3F);
-        *pUTF8++ = 0x80 | ((CharCode >> 12) & 0x3F);
-        *pUTF8++ = 0x80 | ((CharCode >> 6) & 0x3F);
-        *pUTF8++ = 0x80 | (CharCode & 0x3F);
-    }
-    else if (CharCode >= 0x10000)
-    {
-        *pUTF8++ = 0xF0 | ((CharCode >> 18) & 0x07);
-        *pUTF8++ = 0x80 | ((CharCode >> 12) & 0x3F);
-        *pUTF8++ = 0x80 | ((CharCode >> 6) & 0x3F);
-        *pUTF8++ = 0x80 | (CharCode & 0x3F);
-    }
-    else if (CharCode >= 0x0800)
-    {
-        *pUTF8++ = 0xE0 | ((CharCode >> 12) & 0x0F);
-        *pUTF8++ = 0x80 | ((CharCode >> 6) & 0x3F);
-        *pUTF8++ = 0x80 | (CharCode & 0x3F);
-    }
-    else if (CharCode >= 0x0080)
-    {
-        *pUTF8++ = 0xC0 | ((CharCode >> 6) & 0x1F);
-        *pUTF8++ = 0x80 | (CharCode & 0x3F);
-    }
-    else
-    {
-        *pUTF8++ = (char)CharCode;
-    }
-
-    // Move the pointer
-    ppUTF8[0] = pUTF8;
-}
-
-// Convert UTF-8 character into 32-bit unicode.
-// The UTF-8 string pointer will be moved to the next position.
-static uint32_t utf8tou32char
-(
-    char **ppUTF8
-)
-{
-    size_t cb = 0;
-    uint32_t ret = 0;
-    char *pUTF8 = ppUTF8[0];
-
-    // Detect the available room size of the UTF-8 buffer
-    while (cb < 6 && pUTF8[cb]) cb++;
-
-    if ((pUTF8[0] & 0xFE) == 0xFC) // 1111110x
-    {
-        if (6 <= cb)
-        {
-            ret =
-                (((uint32_t)pUTF8[0] & 0x01) << 30) |
-                (((uint32_t)pUTF8[1] & 0x3F) << 24) |
-                (((uint32_t)pUTF8[2] & 0x3F) << 18) |
-                (((uint32_t)pUTF8[3] & 0x3F) << 12) |
-                (((uint32_t)pUTF8[4] & 0x3F) << 6) |
-                (((uint32_t)pUTF8[5] & 0x3F) << 0);
-            ppUTF8[0] = &pUTF8[6];
-            return ret;
-        }
-        else
-            goto FailExit;
-    }
-    else if ((pUTF8[0] & 0xFC) == 0xF8) // 111110xx
-    {
-        if (5 <= cb)
-        {
-            ret =
-                (((uint32_t)pUTF8[0] & 0x03) << 24) |
-                (((uint32_t)pUTF8[1] & 0x3F) << 18) |
-                (((uint32_t)pUTF8[2] & 0x3F) << 12) |
-                (((uint32_t)pUTF8[3] & 0x3F) << 6) |
-                (((uint32_t)pUTF8[4] & 0x3F) << 0);
-            ppUTF8[0] = &pUTF8[5];
-            return ret;
-        }
-        else
-            goto FailExit;
-    }
-    else if ((pUTF8[0] & 0xF8) == 0xF0) // 11110xxx
-    {
-        if (4 <= cb)
-        {
-            ret =
-                (((uint32_t)pUTF8[0] & 0x07) << 18) |
-                (((uint32_t)pUTF8[1] & 0x3F) << 12) |
-                (((uint32_t)pUTF8[2] & 0x3F) << 6) |
-                (((uint32_t)pUTF8[3] & 0x3F) << 0);
-            ppUTF8[0] = &pUTF8[4];
-            return ret;
-        }
-        else
-            goto FailExit;
-    }
-    else if ((pUTF8[0] & 0xF0) == 0xE0) // 1110xxxx
-    {
-        if (3 <= cb)
-        {
-            ret =
-                (((uint32_t)pUTF8[0] & 0x0F) << 12) |
-                (((uint32_t)pUTF8[1] & 0x3F) << 6) |
-                (((uint32_t)pUTF8[2] & 0x3F) << 0);
-            ppUTF8[0] = &pUTF8[3];
-            return ret;
-        }
-        else
-            goto FailExit;
-    }
-    else if ((pUTF8[0] & 0xE0) == 0xC0) // 110xxxxx
-    {
-        if (2 <= cb)
-        {
-            ret =
-                (((uint32_t)pUTF8[0] & 0x1F) << 6) |
-                (((uint32_t)pUTF8[1] & 0x3F) << 0);
-            ppUTF8[0] = &pUTF8[2];
-            return ret;
-        }
-        else
-            goto FailExit;
-    }
-    else if ((pUTF8[0] & 0xC0) == 0x80) // 10xxxxxx
-    {
-        // Wrong encode
-        goto FailExit;
-    }
-    else if ((pUTF8[0] & 0x80) == 0x00) // 0xxxxxxx
-    {
-        ret = pUTF8[0] & 0x7F;
-        ppUTF8[0] = &pUTF8[1];
-        return ret;
-    }
-    return ret;
-FailExit:
-    // If convert failed, null-char will be returned.
-    return ret;
-}
-
 // Load font metadata and config
 static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
 {
@@ -1302,7 +1149,7 @@ FailExit:
 }
 
 // Create a frame, create buffers, copy the source bitmap, preparing for the rendering
-static fontvideo_frame_p frame_create(fontvideo_p fv, uint32_t w, uint32_t h, double timestamp, void *bitmap, int bmp_width, int bmp_height, size_t bmp_pitch)
+static fontvideo_frame_p frame_create(uint32_t w, uint32_t h, double timestamp, void *bitmap, int bmp_width, int bmp_height, size_t bmp_pitch)
 {
     ptrdiff_t i;
     fontvideo_frame_p f = calloc(1, sizeof f[0]);
@@ -1475,6 +1322,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
     }
 }
 
+#ifdef FONTVIDEO_ALLOW_OPENGL
 static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
 {
     opengl_data_p gld = fv->opengl_data;
@@ -1574,6 +1422,7 @@ static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
         f->row[y][x] = '\n';
     }
 }
+#endif
 
 // Render the frame from bitmap into font char codes. One of the magic happens here.
 static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
@@ -1768,7 +1617,7 @@ static void fv_on_get_video(avdec_p av, void *bitmap, int width, int height, siz
     fontvideo_p fv = av->userdata;
     fontvideo_frame_p f;
 
-    f = frame_create(fv, fv->output_w, fv->output_h, timestamp, bitmap, width, height, pitch);
+    f = frame_create(fv->output_w, fv->output_h, timestamp, bitmap, width, height, pitch);
     if (!f)
     {
         return;
@@ -1879,6 +1728,7 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
     char* utf8buf = fv->utf8buf;
     fontvideo_frame_p cur = NULL, next = NULL, prev = NULL;
     int cur_color = 0;
+    int discard_threshold = 0;
 
     if (!fv->frames) return 0;
     if (!fv->rendered_frame_count) return 0;
@@ -1910,7 +1760,16 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                 // If the next frame also need to output right now, skip the current frame
                 if (cur->rendered)
                 {
-                    fprintf(fv->log_fp, "Discarding rendered frame due to lag. (%d)\n", get_thread_id());
+                    discard_threshold++;
+
+                    if (discard_threshold >= 10)
+                    {
+                        if (fv->verbose)
+                        {
+                            fprintf(fv->log_fp, "Discarding rendered frame due to lag. (%d)\n", get_thread_id());
+                        }
+                    }
+                    else break;
                     
                     if (fv->frames == cur)
                     {
@@ -1978,28 +1837,73 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
         if (!cur->rendered) goto FailExit;
         if (fv->do_colored_output)
         {
-            char *u8chr = utf8buf;
-            cur_color = cur->c_row[0][0];
-            memset(utf8buf, 0, fv->utf8buf_size);
-            set_console_color(fv, cur_color);
-            u8chr = strchr(u8chr, 0);
-            for (y = 0; y < (int)cur->h; y++)
+            int done_output = 0;
+#ifdef _WIN32
+            if (fv->do_old_console_output)
             {
-                for (x = 0; x < (int)cur->w; x++)
+                if (!fv->old_console_buffer)
                 {
-                    int new_color = cur->c_row[y][x];
-                    if (new_color != cur_color && cur->row[y][x] != ' ')
+                    fv->old_console_buffer = calloc((size_t)fv->output_w * fv->output_h, sizeof (CHAR_INFO));
+                    if (!fv->old_console_buffer)
                     {
-                        cur_color = new_color;
-                        *u8chr = '\0';
-                        set_console_color(fv, new_color);
-                        u8chr = strchr(u8chr, 0);
+                        fv->do_old_console_output = 0;
+                        done_output = 0;
                     }
-                    u32toutf8(&u8chr, cur->row[y][x]);
+                }
+                else
+                {
+                    CHAR_INFO *ci = fv->old_console_buffer;
+                    COORD BufferSize = {(SHORT)fv->output_w, (SHORT)fv->output_h};
+                    COORD BufferCoord = {0, 0};
+                    SMALL_RECT sr = {0, 0, (SHORT)fv->output_w - 1, (SHORT)fv->output_h - 1};
+                    for (y = 0; y < (int)cur->h && y < (int)fv->output_h; y++)
+                    {
+                        CHAR_INFO *dst_row = &ci[y * fv->output_w];
+                        uint32_t *row = cur->row[y];
+                        uint8_t *c_row = cur->c_row[y];
+                        for (x = 0; x < (int)cur->w && x < (int)fv->output_w; x++)
+                        {
+                            uint8_t Color = c_row[x];
+                            dst_row[x].Char.UnicodeChar = (WCHAR)row[x];
+                            dst_row[x].Attributes =
+                                (Color & 0x08 ? BACKGROUND_INTENSITY : 0) |
+                                (Color & 0x04 ? FOREGROUND_RED : 0) |
+                                (Color & 0x02 ? FOREGROUND_GREEN : 0) |
+                                (Color & 0x01 ? FOREGROUND_BLUE : 0);
+                        }
+                    }
+                    done_output = WriteConsoleOutputW(GetStdHandle(STD_OUTPUT_HANDLE), ci, BufferSize, BufferCoord, &sr);
                 }
             }
-            *u8chr = '\0';
-            fputs(utf8buf, fv->graphics_out_fp);
+#endif
+            if (!done_output)
+            {
+                char *u8chr = utf8buf;
+                cur_color = cur->c_row[0][0];
+                memset(utf8buf, 0, fv->utf8buf_size);
+                set_console_color(fv, cur_color);
+                u8chr = strchr(u8chr, 0);
+                for (y = 0; y < (int)cur->h; y++)
+                {
+                    uint32_t *row = cur->row[y];
+                    uint8_t *c_row = cur->c_row[y];
+                    for (x = 0; x < (int)cur->w; x++)
+                    {
+                        int new_color = c_row[x];
+                        if (new_color != cur_color && row[x] != ' ')
+                        {
+                            cur_color = new_color;
+                            *u8chr = '\0';
+                            set_console_color(fv, new_color);
+                            u8chr = strchr(u8chr, 0);
+                        }
+                        u32toutf8(&u8chr, row[x]);
+                    }
+                }
+                *u8chr = '\0';
+                fputs(utf8buf, fv->graphics_out_fp);
+                done_output = 1;
+            }
         }
         else
         {
@@ -2123,9 +2027,6 @@ fontvideo_p fv_create
     fv->output_h = y_resolution;
     fv->precache_seconds = precache_seconds;
 
-    fv->utf8buf_size = (size_t)fv->output_w * fv->output_h * 32 + 1;
-    fv->utf8buf = malloc(fv->utf8buf_size);
-    if (!fv->utf8buf) goto FailExit;
     if (!load_font(fv, "assets", assets_meta_file)) goto FailExit;
     if (fv->need_chcp || fv->real_time_play)
     {
@@ -2137,6 +2038,10 @@ fontvideo_p fv_create
     {
         fv->output_w /= 2;
     }
+
+    fv->utf8buf_size = (size_t)fv->output_w * fv->output_h * 32 + 1;
+    fv->utf8buf = malloc(fv->utf8buf_size);
+    if (!fv->utf8buf) goto FailExit;
 
     vf.width = fv->output_w * fv->font_w;
     vf.height = fv->output_h * fv->font_h;
@@ -2169,6 +2074,9 @@ int fv_show_prepare(fontvideo_p fv)
     int i;
     int tc = omp_get_max_threads();
     int mt = 1;
+    rttimer_t tmr;
+    char *bar_buf = NULL;
+    int bar_len;
 
     if (!fv) return 0;
 
@@ -2179,6 +2087,9 @@ int fv_show_prepare(fontvideo_p fv)
 
     if (fv->real_time_play)
     {
+        rttimer_init(&tmr, 0);
+        bar_len = fv->output_w - 1;
+        bar_buf = calloc(bar_len + 1, 1);
         do_decode(fv, 0);
         while (fv->rendered_frame_count + fv->rendering_frame_count < fv->precached_frame_count)
         {
@@ -2194,8 +2105,24 @@ int fv_show_prepare(fontvideo_p fv)
             {
                 get_frame_and_render(fv);
             }
+            if (bar_buf && rttimer_gettime(&tmr) >= 1.0)
+            {
+                double progress = (double)fv->rendered_frame_count / fv->precached_frame_count;
+                int pos = (int)(progress * bar_len);
+                if (pos < 0) pos = 0; else if (pos > bar_len) pos = bar_len;
+                for (i = 0; i < pos; i++) bar_buf[i] = '>';
+                for (; i < bar_len; i++) bar_buf[i] = '=';
+                fprintf(fv->log_fp, "%s\r", bar_buf);
+                rttimer_settime(&tmr, 0.0);
+            }
         }
         while (fv->rendering_frame_count);
+        if (bar_buf)
+        {
+            for (i = 0; i < bar_len; i++) bar_buf[i] = '>';
+            fprintf(fv->log_fp, "%s\r", bar_buf);
+            free(bar_buf); bar_buf = NULL;
+        }
 
         rttimer_start(&fv->tmr);
 
@@ -2331,6 +2258,10 @@ void fv_destroy(fontvideo_p fv)
         audio_delete(fv->audios);
         fv->audios = next;
     }
+#endif
+
+#ifdef _WIN32
+    free(fv->old_console_buffer);
 #endif
 
     free(fv->utf8buf);
