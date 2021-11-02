@@ -403,6 +403,8 @@ int fv_allow_opengl(fontvideo_p fv)
     GLint max_fbo_width;
     GLint max_fbo_height;
     GLint Location;
+    int InstMatrixWidth;
+    int InstMatrixHeight;
     struct Quad_Vertex_Struct
     {
         float PosX;
@@ -482,7 +484,9 @@ int fv_allow_opengl(fontvideo_p fv)
 
     match_width = fv->output_w;
     match_height = fv->output_h;
-    size = (size_t)match_width * match_height;
+    InstMatrixWidth = 1;
+    InstMatrixHeight = 1;
+    size = (size_t)InstMatrixWidth * InstMatrixHeight;
     while (size < fv->font_code_count)
     {
         if (match_width > match_height)
@@ -490,14 +494,16 @@ int fv_allow_opengl(fontvideo_p fv)
             int new_height = match_height + fv->output_h;
             if (new_height > max_tex_size) break;
             match_height = new_height;
+            InstMatrixHeight++;
         }
         else
         {
             int new_width = match_width + fv->output_w;
             if (new_width > max_tex_size) break;
             match_width = new_width;
+            InstMatrixWidth++;
         }
-        size = (size_t)match_width * match_height;
+        size = (size_t)InstMatrixWidth * InstMatrixHeight;
     }
 
     gld->match_width = match_width;
@@ -541,12 +547,13 @@ int fv_allow_opengl(fontvideo_p fv)
         "   ivec2 ConsoleCoord = FragCoord - (InstCoord * ConsoleSize);"
         "   int InstCount = InstDim.x * InstDim.y;"
         "   int InstID = InstCoord.x + InstCoord.y * InstDim.x;"
+        "   if (InstID >= FontMatrixCodeCount) discard;"
         "   int BestGlyph = 0;"
         "   float BestScore = -99999.0;"
         "   ivec2 GraphicalCoord = ConsoleCoord * GlyphSize;"
         "   for(int i = 0; i < FontMatrixCodeCount; i += InstCount)"
         "   {"
-        "       int Glyph = (i + InstID) % FontMatrixCodeCount;"
+        "       int Glyph = (i + InstID);"
         "       float Score = 0.0;"
         "       float SrcMod = 0.0;"
         "       float GlyphMod = 0.0;"
@@ -578,6 +585,14 @@ int fv_allow_opengl(fontvideo_p fv)
         "}"
     );
     if (!gld->match_shader) goto FailExit;
+
+    fprintf(fv->log_fp, "OpenGL Renderer: match size: %d x %d.\n", match_width, match_height);
+    if (1)
+    {
+        int InstCount = InstMatrixWidth * InstMatrixHeight;
+        int LoopCount = fv->font_code_count / InstCount;
+        fprintf(fv->log_fp, "Expected loop count '%d' for total code count %zu (%d tests run in a pass).\n", LoopCount, fv->font_code_count, InstCount);
+    }
 
     gld->final_width = fv->output_w;
     gld->final_height = fv->output_h;
@@ -793,7 +808,7 @@ static void lock_frame(fontvideo_p fv)
     {
         if (fv->verbose_threading)
         {
-            readout; // fprintf(stderr, "Frame link list locked by %d. (%d)\n", readout, cur_id);
+            fprintf(fv->log_fp, "Frame link list locked by %d. (%d)\n", readout, cur_id);
         }
         yield();
     }
@@ -814,7 +829,7 @@ static void lock_audio(fontvideo_p fv)
     {
         if (fv->verbose_threading)
         {
-            fprintf(stderr, "Audio link list locked by %d. (%d)\n", readout, cur_id);
+            fprintf(fv->log_fp, "Audio link list locked by %d. (%d)\n", readout, cur_id);
         }
         yield();
     }
@@ -1185,8 +1200,8 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
     size_t font_count_max = 0;
     uint32_t code;
 
-    snprintf(buf, sizeof buf, "%s"SUBDIR"%s", assets_dir, meta_file);
-    d_meta = dictcfg_load(buf, log_fp); // Parse ini file
+    // snprintf(buf, sizeof buf, "%s"SUBDIR"%s", assets_dir, meta_file);
+    d_meta = dictcfg_load(meta_file, log_fp); // Parse ini file
     if (!d_meta) goto FailExit;
 
     d_font = dictcfg_section(d_meta, "[font]"); // Extract section
@@ -1476,6 +1491,11 @@ static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
 
     glctx_MakeCurrent(fv->opengl_context);
 
+    if (fv->verbose)
+    {
+        fprintf(fv->log_fp, "Start GPU rendering a frame. (%d)\n", get_thread_id());
+    }
+
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO_match);
 
     size = (size_t)f->raw_w * f->raw_h * 4;
@@ -1539,6 +1559,11 @@ static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
     glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
 
     glctx_UnMakeCurrent(fv->opengl_context);
+
+    if (fv->verbose)
+    {
+        fprintf(fv->log_fp, "Finished GPU rendering a frame. (%d)\n", get_thread_id());
+    }
 
     for (y = 0; y < (int)f->h; y++)
     {
@@ -1790,9 +1815,13 @@ static fontvideo_frame_p get_frame_and_render(fontvideo_p fv)
         }
         if (atomic_compare_exchange_strong(&f->rendering, &expected, get_thread_id()))
         {
+            double cur_time = rttimer_gettime(&fv->tmr);
+            double lagged_time = cur_time - f->timestamp;
             // If the frame isn't being rendered, first detect if it's too late to render it, then do frame skipping.
-            if (fv->real_time_play && rttimer_gettime(&fv->tmr) > f->timestamp + fv->precache_seconds - 1.0f)
+            if (fv->real_time_play && lagged_time >= 1.0)
             {
+                fprintf(fv->log_fp, "Discarding frame to render due to lag (%lf seconds). (%d)\n", lagged_time, get_thread_id());
+                
                 // Too late to render the frame, skip it.
                 fontvideo_frame_p next = f->next;
                 if (!prev)
@@ -1824,9 +1853,9 @@ static fontvideo_frame_p get_frame_and_render(fontvideo_p fv)
             {
                 fv->rendering_frame_count++;
 
-                if (fv->verbose_threading)
+                if (fv->verbose)
                 {
-                    fprintf(stderr, "Got frame to render. (%d)\n", get_thread_id());
+                    fprintf(fv->log_fp, "Got frame to render. (%d)\n", get_thread_id());
                 }
                 unlock_frame(fv);
                 render_frame_from_rgbabitmap(fv, f);
@@ -1854,7 +1883,10 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
     if (!fv->frames) return 0;
     if (!fv->rendered_frame_count) return 0;
 
-    if (atomic_exchange(&fv->doing_output, 1)) return 0;
+    if (atomic_exchange(&fv->doing_output, 1))
+    {
+        return 0;
+    }
 
     lock_frame(fv);
     cur = fv->frames;
@@ -1878,6 +1910,8 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                 // If the next frame also need to output right now, skip the current frame
                 if (cur->rendered)
                 {
+                    fprintf(fv->log_fp, "Discarding rendered frame due to lag. (%d)\n", get_thread_id());
+                    
                     if (fv->frames == cur)
                     {
                         fv->frames = next;
@@ -1899,6 +1933,8 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                     // Acquire it to prevent it from being rendered
                     if (atomic_compare_exchange_strong(&cur->rendering, &expected, get_thread_id()))
                     {
+                        fprintf(fv->log_fp, "Discarding frame to render due to lag. (%d)\n", get_thread_id());
+                        
                         if (fv->frames == cur)
                         {
                             fv->frames = next;
@@ -2017,9 +2053,9 @@ static int do_decode(fontvideo_p fv, int keeprun)
 #endif
         {
             unlock_frame(fv);
-            if (fv->verbose_threading)
+            if (fv->verbose)
             {
-                fprintf(stderr, "Decoding frames. (%d)\n", get_thread_id());
+                fprintf(fv->log_fp, "Decoding frames. (%d)\n", get_thread_id());
             }
             ret = 1;
             fv->tailed = !avdec_decode(fv->av, fv_on_get_video, fv->do_audio_output ? fv_on_get_audio : NULL);
@@ -2032,9 +2068,9 @@ static int do_decode(fontvideo_p fv, int keeprun)
         unlock_frame(fv);
         if (fv->tailed)
         {
-            if (fv->verbose_threading)
+            if (fv->verbose)
             {
-                fprintf(stderr, "All frames decoded. (%d)\n", get_thread_id());
+                fprintf(fv->log_fp, "All frames decoded. (%d)\n", get_thread_id());
             }
         }
         atomic_exchange(&fv->doing_decoding, 0);
@@ -2043,7 +2079,19 @@ static int do_decode(fontvideo_p fv, int keeprun)
     return ret;
 }
 
-fontvideo_p fv_create(char *input_file, FILE *log_fp, int do_verbose_log, FILE *graphics_out_fp, uint32_t x_resolution, uint32_t y_resolution, double precache_seconds, int do_audio_output, double start_timestamp)
+fontvideo_p fv_create
+(
+    char *input_file,
+    FILE *log_fp,
+    int do_verbose_log,
+    FILE *graphics_out_fp,
+    char *assets_meta_file,
+    uint32_t x_resolution,
+    uint32_t y_resolution,
+    double precache_seconds,
+    int do_audio_output,
+    double start_timestamp
+)
 {
     fontvideo_p fv = NULL;
     avdec_video_format_t vf = {0};
@@ -2054,9 +2102,9 @@ fontvideo_p fv_create(char *input_file, FILE *log_fp, int do_verbose_log, FILE *
     fv->log_fp = log_fp;
     fv->verbose = do_verbose_log;
 #ifdef _DEBUG
-    fv->verbose_threading = 1;
+    fv->verbose = 1;
 #else
-    fv->verbose_threading = 0;
+    fv->verbose = 0;
 #endif
     fv->graphics_out_fp = graphics_out_fp;
     fv->do_audio_output = do_audio_output;
@@ -2078,14 +2126,20 @@ fontvideo_p fv_create(char *input_file, FILE *log_fp, int do_verbose_log, FILE *
     fv->utf8buf_size = (size_t)fv->output_w * fv->output_h * 32 + 1;
     fv->utf8buf = malloc(fv->utf8buf_size);
     if (!fv->utf8buf) goto FailExit;
-    if (!load_font(fv, "assets", "meta.ini")) goto FailExit;
+    if (!load_font(fv, "assets", assets_meta_file)) goto FailExit;
     if (fv->need_chcp || fv->real_time_play)
     {
         init_console(fv);
     }
 
-    vf.width = x_resolution * fv->font_w;
-    vf.height = y_resolution * fv->font_h;
+    // Wide-glyph detect
+    if (fv->font_w > fv->font_h / 2)
+    {
+        fv->output_w /= 2;
+    }
+
+    vf.width = fv->output_w * fv->font_w;
+    vf.height = fv->output_h * fv->font_h;
     vf.pixel_format = AV_PIX_FMT_BGRA;
     avdec_set_decoded_video_format(fv->av, &vf);
 
@@ -2114,18 +2168,29 @@ int fv_show_prepare(fontvideo_p fv)
 {
     int i;
     int tc = omp_get_max_threads();
+    int mt = 1;
 
     if (!fv) return 0;
 
     if (fv->prepared) return 1;
+
+    fprintf(fv->log_fp, "Pre-rendering frames.\n");
+    if (fv->allow_opengl && fv->opengl_context && fv->opengl_data) mt = 0;
 
     if (fv->real_time_play)
     {
         do_decode(fv, 0);
         while (fv->rendered_frame_count + fv->rendering_frame_count < fv->precached_frame_count)
         {
+            if (mt)
+            {
 #pragma omp parallel for
-            for (i = 0; i < tc; i++)
+                for (i = 0; i < tc; i++)
+                {
+                    get_frame_and_render(fv);
+                }
+            }
+            else
             {
                 get_frame_and_render(fv);
             }
@@ -2154,6 +2219,11 @@ int fv_show(fontvideo_p fv)
 {
     int i;
     int tc = omp_get_max_threads();
+#ifdef _OPENMP
+    int run_mt = 1;
+#else
+    int run_mt = 0;
+#endif
 
     if (!fv) return 0;
 
@@ -2161,40 +2231,25 @@ int fv_show(fontvideo_p fv)
 
     fv->real_time_play = 1;
 
-    if (fv->allow_opengl && fv->opengl_context && fv->opengl_data)
+    if (fv->allow_opengl && fv->opengl_context && fv->opengl_data) run_mt = 0;
+
+    if (!run_mt)
     {
-#pragma omp parallel sections
+        for (;;)
         {
-
-#pragma omp section
-            for (;;)
+            while (!fv->tailed)
             {
-                if (!do_decode(fv, 1))
-                    yield();
-
-                if (fv->tailed) break;
+                if (!do_decode(fv, 1)) break;
             }
-
-#pragma omp section
-            for (;;)
+            if (fv->precached_frame_count > fv->rendered_frame_count)
             {
-                if (fv->rendered_frame_count)
-                {
-                    if (!output_rendered_video(fv, rttimer_gettime(&fv->tmr)));
-                    yield();
-                }
-
-                if (fv->tailed && !fv->precached_frame_count) break;
+                get_frame_and_render(fv);
             }
-
-#pragma omp section
-            for (;;)
+            if (fv->rendered_frame_count)
             {
-                fontvideo_frame_p f = get_frame_and_render(fv);
-                if (!f) yield();
-
-                if (fv->tailed && fv->rendered_frame_count >= fv->precached_frame_count) break;
+                output_rendered_video(fv, rttimer_gettime(&fv->tmr));
             }
+            if (fv->tailed && !fv->precached_frame_count && !fv->rendered_frame_count) break;
         }
     }
     else
