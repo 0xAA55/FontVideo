@@ -11,6 +11,7 @@ fontvideo
 *.aps
 *.pdb
 *.idb
+*.log
 .vs
 msvc/.vs/
 */intermediate/
