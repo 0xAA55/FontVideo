@@ -4,23 +4,28 @@
 
 #ifdef _WIN32
 #include<Windows.h>
+#define SUBDIR "\\"
+#else
+#define SUBDIR "/"
 #endif
 
 void usage(char *argv0)
 {
-    fprintf(stderr, "Usage: %s -i <input> [-o output.txt] [-v] [-p seconds] [-m] [-w width] [-h height] [-s width height] [-S from_sec] [-b]\n"
+    fprintf(stderr, "Usage: %s -i <input> [-o output.txt] [-v] [-p seconds] [-m] [-w width] [-h height] [-s width height] [-S from_sec] [-b] [--no-opengl] [--assets-meta metafile.ini]\n"
         "Or: %s <input>\n"
-        "\t-i : Specify the input video file name.\n"
-        "\t-o : [Optional] Specify the output text file name.\n"
-        "\t-v : Verbose mode, output debug informations.\n"
-        "\t-p : [Optional] Specify pre-render seconds, Longer value results longer delay but better quality.\n"
-        "\t-m : Mute sound output.\n"
-        "\t-w : [Optional] Width of the output.\n"
-        "\t-h : [Optional] Height of the output.\n"
-        "\t-s : [Optional] Size of the output, default is to detect the size of the console window, or 80x25 if failed.\n"
-        "\t-b : Only do white-black output.\n"
-        "\t-S : [Optional] Set the playback start time of seconds.\n"
+        "\t-i: Specify the input video file name.\n"
+        "\t-o: [Optional] Specify the output text file name.\n"
+        "\t-v: Verbose mode, output debug informations.\n"
+        "\t-p: [Optional] Specify pre-render seconds, Longer value results longer delay but better quality.\n"
+        "\t-m: Mute sound output.\n"
+        "\t-w: [Optional] Width of the output.\n"
+        "\t-h: [Optional] Height of the output.\n"
+        "\t-s: [Optional] Size of the output, default is to detect the size of the console window, or 80x25 if failed.\n"
+        "\t-b: Only do white-black output.\n"
+        "\t-S: [Optional] Set the playback start time of seconds.\n"
         "\t--no-opengl: [Optional] Do not use OpenGL to accelerate rendering.\n"
+        "\t--assets-meta: [Optional] Use specified meta file, default is to use 'assets"SUBDIR"meta.ini'.\n"
+        "\t--log: [Optional] Specify the log file.\n"
         "", argv0, argv0);
 }
 
@@ -39,6 +44,8 @@ int main(int argc, char **argv)
     int output_height = 25;
     int no_colors = 0;
     int no_opengl = 0;
+    char *assets_meta = "assets"SUBDIR"meta.ini";
+    FILE *fp_log = stderr;
 
 #ifdef _WIN32
     if (1) // Try to detect console window size.
@@ -136,6 +143,23 @@ int main(int argc, char **argv)
                 i++;
                 no_opengl = 1;
             }
+            else if (!strcmp(argv[i], "--assets-meta"))
+            {
+                if (++i >= argc) goto BadUsageExit;
+                assets_meta = argv[i++];
+            }
+            else if (!strcmp(argv[i], "--log"))
+            {
+                char *log_file;
+                if (++i >= argc) goto BadUsageExit;
+                log_file = argv[i++];
+                fp_log = fopen(log_file, "a");
+                if (!fp_log)
+                {
+                    fp_log = stderr;
+                    fprintf(stderr, "Trying to open log file '%s' failed: %s.\n", log_file, strerror(errno));
+                }
+            }
             else
             {
                 fprintf(stderr, "Unknown option: %s\n", argv[i]);
@@ -164,7 +188,7 @@ int main(int argc, char **argv)
 
     if (!fp_out) fp_out = stdout;
 
-    fv = fv_create(input_file, stderr, verbose, fp_out, output_width, output_height, prerender_secs, !mute, start_sec);
+    fv = fv_create(input_file, fp_log, verbose, fp_out, assets_meta, output_width, output_height, prerender_secs, !mute, start_sec);
     if (!fv) goto FailExit;
     if (no_colors) fv->do_colored_output = 0;
 
@@ -177,14 +201,17 @@ int main(int argc, char **argv)
 
     fv_destroy(fv);
     if (fp_out != stdout && fp_out != NULL) fclose(fp_out);
+    if (fp_log != stderr && fp_log != NULL) fclose(fp_log);
     return 0;
 BadUsageExit:
     usage(argv[0]);
     fv_destroy(fv);
     if (fp_out != stdout && fp_out != NULL) fclose(fp_out);
+    if (fp_log != stderr && fp_log != NULL) fclose(fp_log);
     return 1;
 FailExit:
     fv_destroy(fv);
     if (fp_out != stdout && fp_out != NULL) fclose(fp_out);
+    if (fp_log != stderr && fp_log != NULL) fclose(fp_log);
     return 2;
 }
