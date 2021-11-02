@@ -2143,9 +2143,46 @@ int fv_show(fontvideo_p fv)
 
     fv->real_time_play = 1;
 
-    if (fv->allow_opengl && fv->opengl_context && fv->opengl_data) run_mt = 0;
-
-    if (!run_mt)
+    if (run_mt && fv->allow_opengl && fv->opengl_context && fv->opengl_data)
+    {
+#pragma omp parallel sections
+        {
+#pragma omp section
+            for (;;)
+            {
+                while (!fv->tailed)
+                {
+                    if (!do_decode(fv, 1)) break;
+                }
+                yield();
+                if (fv->tailed && !fv->precached_frame_count && !fv->rendering_frame_count && !fv->rendered_frame_count) break;
+            }
+#pragma omp section
+            for (;;)
+            {
+                if (fv->precached_frame_count > fv->rendered_frame_count)
+                {
+                    fontvideo_frame_p f = get_frame_and_render(fv);
+                    if (!f) yield();
+                }
+                if (fv->tailed && !fv->precached_frame_count && !fv->rendering_frame_count && !fv->rendered_frame_count) break;
+            }
+#pragma omp section
+            for (;;)
+            {
+                if (fv->rendered_frame_count)
+                {
+                    output_rendered_video(fv, rttimer_gettime(&fv->tmr));
+                }
+                else
+                {
+                    yield();
+                }
+                if (fv->tailed && !fv->precached_frame_count && !fv->rendering_frame_count && !fv->rendered_frame_count) break;
+            }
+        }
+    }
+    else if (!run_mt)
     {
         for (;;)
         {
