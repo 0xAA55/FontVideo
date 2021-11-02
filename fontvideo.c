@@ -535,6 +535,7 @@ int fv_allow_opengl(fontvideo_p fv)
         ,
         NULL,
         "#version 130\n"
+        "precision highp float;"
         "in vec2 TexCoord;"
         "out vec4 Output;"
         "uniform ivec2 Resolution;"
@@ -546,48 +547,47 @@ int fv_allow_opengl(fontvideo_p fv)
         "uniform sampler2D SrcColor;"
         "void main()"
         "{"
-        "   ivec2 FragCoord = ivec2(TexCoord * vec2(Resolution));"
-        "   ivec2 InstDim = Resolution / ConsoleSize;"
-        "   ivec2 InstCoord = FragCoord / ConsoleSize;"
-        "   ivec2 ConsoleCoord = FragCoord - (InstCoord * ConsoleSize);"
-        "   int InstCount = InstDim.x * InstDim.y;"
-        "   int InstID = InstCoord.x + InstCoord.y * InstDim.x;"
-        "   if (InstID >= FontMatrixCodeCount) discard;"
-        "   int BestGlyph = 0;"
-        "   float BestScore = -99999.0;"
-        "   ivec2 GraphicalCoord = ConsoleCoord * GlyphSize;"
-        "   for(int i = 0; i < FontMatrixCodeCount; i += InstCount)"
-        "   {"
-        "       int Glyph = (i + InstID);"
-        "       if (Glyph >= FontMatrixCodeCount) break;"
-        "       float Score = 0.0;"
-        "       float SrcMod = 0.0;"
-        "       float GlyphMod = 0.0;"
-        "       ivec2 GlyphPos = ivec2(Glyph % FontMatrixSize.x, Glyph / FontMatrixSize.x) * GlyphSize;"
-        "       for(int y = 0; y < GlyphSize.y; y++)"
-        "       {"
-        "           for(int x = 0; x < GlyphSize.x; x++)"
-        "           {"
-        "               ivec2 src_xy = ivec2(x, y);"
-        "               ivec2 gly_xy = ivec2(x, y);"
-        "               float SrcLum = length(texelFetch(SrcColor, GraphicalCoord + src_xy, 0).rgb);"
-        "               float GlyphLum = length(texelFetch(FontMatrix, GlyphPos + gly_xy, 0).rgb);"
-        "               SrcLum -= 0.5;"
-        "               GlyphLum -= 0.5;"
-        "               Score += SrcLum * GlyphLum;"
-        "               SrcMod += SrcLum * SrcLum;"
-        "               GlyphMod += GlyphLum * GlyphLum;"
-        "           }"
-        "       }"
-        "       if (SrcMod >= 0.000001) Score /= sqrt(SrcMod);"
-        "       if (GlyphMod >= 0.000001) Score /= sqrt(GlyphMod);"
-        "       if (Score >= BestScore)"
-        "       {"
-        "           BestScore = Score;"
-        "           BestGlyph = Glyph;"
-        "       }"
-        "   }"
-        "   Output = vec4(BestScore, float(BestGlyph), 0.0, 0.0);"
+        "    ivec2 FragCoord = ivec2(TexCoord * vec2(Resolution));"
+        "    ivec2 InstDim = Resolution / ConsoleSize;"
+        "    ivec2 InstCoord = FragCoord / ConsoleSize;"
+        "    ivec2 ConsoleCoord = FragCoord - (InstCoord * ConsoleSize);"
+        "    int InstCount = InstDim.x * InstDim.y;"
+        "    int InstID = InstCoord.x + InstCoord.y * InstDim.x;"
+        "    if (InstID >= FontMatrixCodeCount) discard;"
+        "    int BestGlyph = 0;"
+        "    float BestScore = -99999.0;"
+        "    ivec2 GraphicalCoord = ConsoleCoord * GlyphSize;"
+        "    for(int i = 0; i < FontMatrixCodeCount; i += InstCount)"
+        "    {"
+        "        int Glyph = (i + InstID);"
+        "        if (Glyph >= FontMatrixCodeCount) break;"
+        "        float Score = 0.0;"
+        "        float SrcMod = 0.0;"
+        "        float GlyphMod = 0.0;"
+        "        ivec2 GlyphPos = ivec2(Glyph % FontMatrixSize.x, Glyph / FontMatrixSize.x) * GlyphSize;"
+        "        for(int y = 0; y < GlyphSize.y; y++)"
+        "        {"
+        "            for(int x = 0; x < GlyphSize.x; x++)"
+        "            {"
+        "                ivec2 xy = ivec2(x, y);"
+        "                float SrcLum = length(texelFetch(SrcColor, GraphicalCoord + xy, 0).rgb);"
+        "                float GlyphLum = length(texelFetch(FontMatrix, GlyphPos + xy, 0).rgb);"
+        "                SrcLum -= 0.5;"
+        "                GlyphLum -= 0.5;"
+        "                Score += SrcLum * GlyphLum;"
+        "                SrcMod += SrcLum * SrcLum;"
+        "                GlyphMod += GlyphLum * GlyphLum;"
+        "            }"
+        "        }"
+        "        if (SrcMod >= 0.000001) Score /= sqrt(SrcMod);"
+        "        if (GlyphMod >= 0.000001) Score /= sqrt(GlyphMod);"
+        "        if (Score >= BestScore)"
+        "        {"
+        "            BestScore = Score;"
+        "            BestGlyph = Glyph;"
+        "        }"
+        "    }"
+        "    Output = vec4(BestScore, float(BestGlyph), 0.0, 0.0);"
         "}"
     );
     if (!gld->match_shader) goto FailExit;
@@ -644,6 +644,7 @@ int fv_allow_opengl(fontvideo_p fv)
         ,
         NULL,
         "#version 130\n"
+        "precision highp float;"
         "in vec2 TexCoord;"
         "out int Output;"
         "out int Color;"
@@ -660,6 +661,7 @@ int fv_allow_opengl(fontvideo_p fv)
         "    ivec2 InstMatrix = MatchTexSize / ConsoleSize;"
         "    float BestScore = 0.0;"
         "    int BestGlyph = 0;"
+        "    int InstID = 0;"
         "    for(int y = 0; y < InstMatrix.y; y++)"
         "    {"
         "        for(int x = 0; x < InstMatrix.x; x++)"
@@ -671,6 +673,7 @@ int fv_allow_opengl(fontvideo_p fv)
         "                BestScore = Data.x;"
         "                BestGlyph = int(Data.y);"
         "            }"
+        "            InstID ++;"
         "        }"
         "    }"
         "    ivec3 AvrColor = ivec3(0);"
@@ -1260,7 +1263,6 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
 
                             src_lum -= 0.5;
                             font_lum -= 0.5;
-                            // src_lum = sqrtf(src_lum);
                             score += src_lum * font_lum;
                             src_normalize += src_lum * src_lum;
                             font_normalize += font_lum * font_lum;
@@ -1414,11 +1416,12 @@ static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
 
     for (y = 0; y < (int)f->h; y++)
     {
+        uint32_t *row = f->row[y];
         for (x = 0; x < (int)f->w - 1; x++)
         {
-            f->row[y][x] = fv->font_codes[f->row[y][x]];
+            row[x] = fv->font_codes[row[x]];
         }
-        f->row[y][x] = '\n';
+        row[x] = '\n';
     }
 }
 #endif
@@ -1461,9 +1464,6 @@ static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
         ReleaseDC(NULL, hDC);
     }
 #endif
-
-    // free(f->raw_data); f->raw_data = NULL;
-    // free(f->raw_data_row); f->raw_data_row = NULL;
 }
 
 // Lock the link list of the frames, insert the frame into the link list, preserve the ordering.
@@ -1849,7 +1849,7 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                         done_output = 0;
                     }
                 }
-                else
+                if (fv->old_console_buffer)
                 {
                     CHAR_INFO *ci = fv->old_console_buffer;
                     COORD BufferSize = {(SHORT)fv->output_w, (SHORT)fv->output_h};
@@ -1862,13 +1862,16 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                         uint8_t *c_row = cur->c_row[y];
                         for (x = 0; x < (int)cur->w && x < (int)fv->output_w; x++)
                         {
+                            uint32_t Char = row[x];
                             uint8_t Color = c_row[x];
-                            dst_row[x].Char.UnicodeChar = (WCHAR)row[x];
-                            dst_row[x].Attributes =
-                                (Color & 0x08 ? BACKGROUND_INTENSITY : 0) |
-                                (Color & 0x04 ? FOREGROUND_RED : 0) |
+                            WORD Attr =
+                                (Color & 0x01 ? FOREGROUND_RED : 0) |
                                 (Color & 0x02 ? FOREGROUND_GREEN : 0) |
-                                (Color & 0x01 ? FOREGROUND_BLUE : 0);
+                                (Color & 0x04 ? FOREGROUND_BLUE : 0) |
+                                (Color & 0x08 ? FOREGROUND_INTENSITY : 0);
+                            if (!Attr) Attr = FOREGROUND_INTENSITY;
+                            dst_row[x].Attributes = Attr;
+                            dst_row[x].Char.UnicodeChar = Char;
                         }
                     }
                     done_output = WriteConsoleOutputW(GetStdHandle(STD_OUTPUT_HANDLE), ci, BufferSize, BufferCoord, &sr);
