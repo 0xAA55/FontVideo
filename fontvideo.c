@@ -1650,7 +1650,7 @@ static fontvideo_frame_p get_frame_and_render(fontvideo_p fv)
             double cur_time = rttimer_gettime(&fv->tmr);
             double lagged_time = cur_time - f->timestamp;
             // If the frame isn't being rendered, first detect if it's too late to render it, then do frame skipping.
-            if (fv->real_time_play && lagged_time >= 1.0)
+            if (fv->real_time_play && fv->prepared && lagged_time >= 1.0)
             {
                 fprintf(fv->log_fp, "Discarding frame to render due to lag (%lf seconds). (%d)\n", lagged_time, get_thread_id());
                 
