@@ -36,7 +36,11 @@ jobs:
     - name: Pack Up
       working-directory: ${{env.GITHUB_WORKSPACE}}
       run:
-        zip -9 FontVideo_Bin.zip FontVideo.exe LICENSE *.dll assets
+        $compress = @{
+          Path = "FontVideo.exe", "LICENSE", "*.dll", "assets"
+          DestinationPath = "FontVideo_Bin.zip"
+        }
+        Compress-Archive @compress
 
     - name: Create Release
       uses: actions/create-release@v1.0.0
