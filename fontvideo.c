@@ -901,6 +901,9 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
         // Next audio piece in the link list
         fontvideo_audio_p next = fv->audios->next;
 
+        // Current time
+        double current_time = rttimer_gettime(&fv->tmr);
+
         // Source pointer
         float *sptr = fv->audios->buffer; // Mono
         float *sptr_l = fv->audios->ptr_left; // Stereo left
@@ -912,6 +915,18 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
         size_t sstep_r = fv->audios->step_right; // Stereo right
         ptrdiff_t writable = fv->audios->frames; // Source frames
         size_t wrote = 0; // Total frames wrote
+
+        // Do audio piece skip
+        if (next)
+        {
+            if (current_time > next->timestamp)
+            {
+                audio_delete(fv->audios);
+                fv->audios = next;
+                continue;
+            }
+        }
+
         if ((size_t)writable > samples_to_write_per_channel - total) writable = (ptrdiff_t)(samples_to_write_per_channel - total);
         if (!writable) break;
         switch (channel_count)
