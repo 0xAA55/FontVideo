@@ -201,6 +201,7 @@
       <LargeAddressAware>true</LargeAddressAware>
       <SetChecksum>true</SetChecksum>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
     </Link>
     <CustomBuildStep>
       <Command>copy $(OutDir)$(TargetName)$(TargetExt) $(SolutionDir)$(TargetName)$(TargetExt)</Command>
@@ -248,6 +249,7 @@
       <LargeAddressAware>true</LargeAddressAware>
       <SetChecksum>true</SetChecksum>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
     </Link>
     <CustomBuildStep>
       <Command>copy $(OutDir)$(TargetName)$(TargetExt) $(SolutionDir)$(TargetName)$(TargetExt)</Command>
