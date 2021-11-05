@@ -37,38 +37,36 @@ jobs:
       working-directory: ${{env.GITHUB_WORKSPACE}}
       run:
         Compress-Archive -DestinationPath "FontVideo_Bin.zip" -Path "FontVideo.exe", "LICENSE", "*.dll", "assets"
-    - id: step_version
-      run: echo "::set-output name=version::${{ steps.package_version.outputs.version }}"
-    - id: step_upload_url
-      run: echo "::set-output name=upload_url::${{ steps.create_release.outputs.upload_url }}"
-      
-    outputs:
-      version: ${{ steps.step_version.outputs.version }}
-      upload_url: ${{ steps.step_upload_url.outputs.upload_url }}
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v2
+      with:
+        name: FontVideo
+        path: FontVideo_Bin.zip
 
-  Make_GitHub_Release:
-    name: Create Release
+  Publish_Release:
+    name: Publish Release
     runs-on: windows-latest
     needs: Build
     steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+    - name: Download artifacts
+      uses: actions/download-artifact@v2
+      with:
+        name: FontVideo
+        path: .
     - name: Create Release
-      uses: actions/create-release@v1.0.0
+      id: create_release
+      run: |
+        set _date=%DATE%-%TIME%
+        set _date=%_date:/=-%
+        set _date=%_date: =-%
+        set _date=%_date::=-%
+        set _date=%_date:.=-%
+        echo %_date%
+        set NAME="Auto-Build %_date%"
+        set TAGNAME="autobuild-%_date%
+        hub release create FontVideo_Bin.zip -m %NAME% -t "master" %TAGNAME%
+        echo "::set-output name=tag_name::%TAGNAME%"
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ github.ref }}
-        release_name: Release ${{ github.ref }}
-        draft: false
-        prerelease: false
-
-    - name: Upload Release Asset
-      uses: actions/upload-release-asset@v1.0.1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ needs.Build.outputs.upload_url }}
-        asset_path: ./FontVideo_Bin.zip
-        asset_name: FontVideo_Bin.zip
-        asset_content_type: application/zip
-
-      
+        GITHUB_TOKEN: ${{ github.token }}
