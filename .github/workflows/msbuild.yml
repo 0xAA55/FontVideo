@@ -58,6 +58,7 @@ jobs:
     - name: Create Release
       id: create_release
       run: |
+        cmd /c
         set _date=%DATE%-%TIME%
         set _date=%_date:/=-%
         set _date=%_date: =-%
@@ -66,7 +67,7 @@ jobs:
         echo %_date%
         set NAME="Auto-Build %_date%"
         set TAGNAME="autobuild-%_date%"
-        hub release create FontVideo_Bin.zip -m %NAME% -t "master" %TAGNAME%
+        hub release create -a FontVideo_Bin.zip -m %NAME% -t "master" %TAGNAME%
         echo "::set-output name=tag_name::%TAGNAME%"
       env:
         GITHUB_TOKEN: ${{ github.token }}
