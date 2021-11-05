@@ -58,9 +58,8 @@ jobs:
     - name: Create Release
       id: create_release
       run: |
-        $Date = (Get-Date -Format "yyyy/MM/dd-HH:mm")
-        $NAME="Auto-Build $Date"
-        $TAGNAME="autobuild-$Date"
+        $NAME="Auto-Build (Get-Date -Format "yyyy/MM/dd-HH:mm")"
+        $TAGNAME="autobuild-(Get-Date -Format "yyyy-MM-dd-HH-mm")"
         hub release create -a FontVideo_Bin.zip -m $NAME -t "master" $TAGNAME
         echo "::set-output name=tag_name::$TAGNAME"
       env:
