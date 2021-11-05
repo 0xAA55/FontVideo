@@ -65,7 +65,7 @@ jobs:
         set _date=%_date:.=-%
         echo %_date%
         set NAME="Auto-Build %_date%"
-        set TAGNAME="autobuild-%_date%
+        set TAGNAME="autobuild-%_date%"
         hub release create FontVideo_Bin.zip -m %NAME% -t "master" %TAGNAME%
         echo "::set-output name=tag_name::%TAGNAME%"
       env:
