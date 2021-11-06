@@ -26,7 +26,7 @@ Default is output to `stdout`, but you can specify its output to a file.
 
 ## Demo
 
-![Source Picture](./demo.jpg)
+![Source Picture](./demo.jpg =250x)
 
 	gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg
 	gggggggggggggggggggggggggggggg%%%Qgggggggggggggggggggggggggggg
