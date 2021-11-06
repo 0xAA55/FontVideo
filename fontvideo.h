@@ -87,6 +87,7 @@ typedef struct fontvideo_struct
     uint32_t rendering_frame_count;
     uint32_t rendered_frame_count;
     double avg_rendering_time_consuming;
+    double last_output_time;
 
     char *utf8buf;
     size_t utf8buf_size;
