@@ -23,7 +23,7 @@ uint32_t utf8tou32char
 // The UTF-16 output string pointer will be moved to the next position.
 void u32toutf16
 (
-    wchar_t **ppUTF16,
+    uint16_t **ppUTF16,
     const uint32_t CharCode
 );
 
@@ -31,7 +31,7 @@ void u32toutf16
 // The UTF-16 string pointer will be moved to the next position.
 uint32_t u16tou32char
 (
-    wchar_t **ppUTF16
+    uint16_t **ppUTF16
 );
 
 #endif // !_UTF_H_

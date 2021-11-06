@@ -164,11 +164,11 @@ FailExit:
 // The UTF-16 output string pointer will be moved to the next position.
 void u32toutf16
 (
-    wchar_t **ppUTF16,
+    uint16_t **ppUTF16,
     const uint32_t CharCode
 )
 {
-    wchar_t *pUTF16 = ppUTF16[0];
+    uint16_t *pUTF16 = ppUTF16[0];
     if (CharCode <= 0xffff)
     {
         *pUTF16++ = (uint16_t)CharCode;
@@ -192,10 +192,10 @@ void u32toutf16
 // The UTF-16 string pointer will be moved to the next position.
 uint32_t u16tou32char
 (
-    wchar_t **ppUTF16
+    uint16_t **ppUTF16
 )
 {
-    wchar_t *pUTF16 = ppUTF16[0];
+    uint16_t *pUTF16 = ppUTF16[0];
     uint32_t CharCode = 0xFFFD;
 
     switch (pUTF16[0] & 0xFC00)
