@@ -63,8 +63,10 @@ typedef struct fontvideo_struct
     void *opengl_context;
     void *opengl_data;
 
+    char *font_face;
     uint32_t font_w, font_h;
     UniformBitmap_p font_matrix;
+    float *font_norm_values;
     uint32_t font_mat_w;
     uint32_t font_mat_h;
     size_t font_code_count;
