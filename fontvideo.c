@@ -1430,6 +1430,7 @@ static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
 {
     if (f->rendered) return;
 
+    fv->rendering_frame_count++;
     f->rendering_start_time = rttimer_gettime(&fv->tmr);
 
 #ifdef FONTVIDEO_ALLOW_OPENGL
@@ -1664,8 +1665,9 @@ static fontvideo_frame_p get_frame_and_render(fontvideo_p fv)
         {
             double cur_time = rttimer_gettime(&fv->tmr);
             double lagged_time = cur_time - f->timestamp;
+            double last_output_to_now = cur_time - fv->last_output_time;
             // If the frame isn't being rendered, first detect if it's too late to render it, then do frame skipping.
-            if (fv->real_time_play && fv->prepared && lagged_time >= 1.0)
+            if (fv->real_time_play && fv->prepared && lagged_time >= 1.0 && last_output_to_now >= 0.5)
             {
                 fprintf(fv->log_fp, "Discarding frame to render due to lag (%lf seconds). (%d)\n", lagged_time, get_thread_id());
                 
@@ -1698,8 +1700,6 @@ static fontvideo_frame_p get_frame_and_render(fontvideo_p fv)
             }
             else
             {
-                fv->rendering_frame_count++;
-
                 if (fv->verbose)
                 {
                     fprintf(fv->log_fp, "Got frame to render. (%d)\n", get_thread_id());
@@ -1765,22 +1765,21 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                         {
                             fprintf(fv->log_fp, "Discarding rendered frame due to lag. (%d)\n", get_thread_id());
                         }
-                    }
-                    else break;
                     
-                    if (fv->frames == cur)
-                    {
-                        fv->frames = next;
+                        if (fv->frames == cur)
+                        {
+                            fv->frames = next;
+                        }
+                        else
+                        {
+                            if (!prev) prev = fv->frames;
+                            prev->next = next;
+                        }
+                        frame_delete(cur);
+                        cur = next;
+                        fv->precached_frame_count--;
+                        fv->rendered_frame_count--;
                     }
-                    else
-                    {
-                        if (!prev) prev = fv->frames;
-                        prev->next = next;
-                    }
-                    frame_delete(cur);
-                    cur = next;
-                    fv->precached_frame_count--;
-                    fv->rendered_frame_count--;
                 }
                 else
                 {
@@ -1803,7 +1802,6 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                         frame_delete(cur);
                         cur = next;
                         fv->precached_frame_count--;
-                        fv->rendered_frame_count--;
                     }
                     else
                     {
@@ -1929,6 +1927,7 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
         frame_delete(cur);
         fv->precached_frame_count--;
         fv->rendered_frame_count--;
+        fv->last_output_time = timestamp;
         unlock_frame(fv);
     }
     atomic_exchange(&fv->doing_output, 0);
@@ -2071,8 +2070,6 @@ FailExit:
 
 int fv_show_prepare(fontvideo_p fv)
 {
-    int i;
-    int tc = omp_get_max_threads();
     int mt = 1;
     rttimer_t tmr;
     char *bar_buf = NULL;
@@ -2095,10 +2092,10 @@ int fv_show_prepare(fontvideo_p fv)
         {
             if (mt)
             {
-#pragma omp parallel for
-                for (i = 0; i < tc; i++)
+#pragma omp parallel
+                for (;;)
                 {
-                    get_frame_and_render(fv);
+                    if (!get_frame_and_render(fv)) break;
                 }
             }
             else
@@ -2109,6 +2106,7 @@ int fv_show_prepare(fontvideo_p fv)
             {
                 double progress = (double)fv->rendered_frame_count / fv->precached_frame_count;
                 int pos = (int)(progress * bar_len);
+                int i;
                 if (pos < 0) pos = 0; else if (pos > bar_len) pos = bar_len;
                 for (i = 0; i < pos; i++) bar_buf[i] = '>';
                 for (; i < bar_len; i++) bar_buf[i] = '=';
@@ -2119,6 +2117,7 @@ int fv_show_prepare(fontvideo_p fv)
         while (fv->rendering_frame_count);
         if (bar_buf)
         {
+            int i;
             for (i = 0; i < bar_len; i++) bar_buf[i] = '>';
             fprintf(fv->log_fp, "%s\r", bar_buf);
             free(bar_buf); bar_buf = NULL;
@@ -2144,8 +2143,6 @@ int fv_show_prepare(fontvideo_p fv)
 
 int fv_show(fontvideo_p fv)
 {
-    int i;
-    int tc = omp_get_max_threads();
 #ifdef _OPENMP
     int run_mt = 1;
 #else
@@ -2218,34 +2215,22 @@ int fv_show(fontvideo_p fv)
     }
     else
     {
-#pragma omp parallel for // ordered
-        for (i = 0; i < tc; i++)
+#pragma omp parallel
+        for (;;)
         {
-            if (i == 0) for (;;)
+            if ((!fv->tailed && !do_decode(fv, 1)) ||
+                (fv->precached_frame_count > fv->rendered_frame_count && !get_frame_and_render(fv)) ||
+                (fv->rendered_frame_count && !output_rendered_video(fv, rttimer_gettime(&fv->tmr))))
             {
-                if (!do_decode(fv, 1))
-                    yield();
-
-                if (fv->tailed) break;
+                continue;
             }
-            else if (i == 1) for (;;)
+            else
             {
-                if (fv->rendered_frame_count)
-                {
-                    if (!output_rendered_video(fv, rttimer_gettime(&fv->tmr)));
-                    yield();
-                }
-
-                if (fv->tailed && !fv->precached_frame_count) break;
+                yield();
             }
-            else for (;;)
-            {
-                fontvideo_frame_p f = get_frame_and_render(fv);
-                if (!f) yield();
-
-                if (fv->tailed && fv->rendered_frame_count >= fv->precached_frame_count) break;
-            }
+            if (fv->tailed && !fv->precached_frame_count && !fv->rendered_frame_count) break;
         }
+
     }
 #ifndef FONTVIDEO_NO_SOUND
     while (fv->audios || fv->audio_last) yield();
