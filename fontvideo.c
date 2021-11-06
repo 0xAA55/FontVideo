@@ -22,12 +22,29 @@
 #include"utf.h"
 
 #ifdef _DEBUG
-#   define DEBUG_OUTPUT_TO_SCREEN 0
+#   define DEBUG_OUTPUT_TO_SCREEN 1
 #endif
 
 #ifdef _WIN32
-
 #define SUBDIR "\\"
+
+#if defined(_DEBUG) && defined(DEBUG_OUTPUT_TO_SCREEN)
+void DebugRawBitmap(int dst_x, int dst_y, void *bitmap, int bmp_w, int bmp_h)
+{
+    HDC hDC = GetDC(NULL);
+    BITMAPINFOHEADER BMIF =
+    {
+        40, bmp_w, -bmp_h, 1, 32, 0
+    };
+    StretchDIBits(hDC, dst_x, dst_y, bmp_w, bmp_h,
+        0, 0, bmp_w, bmp_h,
+        bitmap,
+        (BITMAPINFO *)&BMIF,
+        DIB_RGB_COLORS,
+        SRCCOPY);
+    ReleaseDC(NULL, hDC);
+}
+#endif
 
 static void PrintLastError(FILE *fp)
 {
@@ -63,6 +80,33 @@ static void init_console(fontvideo_p fv)
             if (!SetConsoleMode(hConsole, ConMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING))
             {
                 fv->do_old_console_output = 1;
+            }
+        }
+
+        if (fv->font_face && strlen(fv->font_face))
+        {
+            CONSOLE_FONT_INFOEX cfi = {0};
+            size_t i = 0;
+            char *src_face = fv->font_face;
+            wchar_t *dst_face = &cfi.FaceName;
+            uint32_t uchar = 0;
+
+            cfi.cbSize = sizeof cfi;
+            GetCurrentConsoleFontEx(hConsole, FALSE, &cfi);
+
+            cfi.nFont = 0;
+            cfi.FontFamily = FF_DONTCARE;
+            cfi.FontWeight = FW_NORMAL;
+            do
+            {
+                uchar = utf8tou32char(&src_face);
+                u32toutf16(&dst_face, uchar);
+            } while (uchar);
+            if (!SetCurrentConsoleFontEx(hConsole, FALSE, &cfi))
+            {
+                fprintf(fv->log_fp, "SetCurrentConsoleFontEx() failed: ");
+                PrintLastError(fv->log_fp);
+                fprintf(fv->log_fp, "\n");
             }
         }
     }
@@ -429,7 +473,7 @@ int fv_allow_opengl(fontvideo_p fv)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, fv->font_matrix->Width, fv->font_matrix->Height, 0, GL_BGRA, GL_UNSIGNED_BYTE, 0);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, fv->font_matrix->Width, fv->font_matrix->Height, 0, GL_RED, GL_FLOAT, 0);
     glBindTexture(GL_TEXTURE_2D, 0);
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
     glDeleteBuffers(1, &pbo_font_matrix);
@@ -1042,6 +1086,7 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
     char *font_code_txt = NULL;
     FILE *fp_code = NULL;
     size_t i = 0;
+    ptrdiff_t si;
     char *font_raw_code = NULL;
     char *ch;
     size_t font_raw_code_size = 0;
@@ -1059,6 +1104,7 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
     font_code_txt = dictcfg_getstr(d_font, "font_code", "gb2312_code.txt");
     fv->font_w = dictcfg_getint(d_font, "font_width", 12);
     fv->font_h = dictcfg_getint(d_font, "font_height", 12);
+    fv->font_face = dictcfg_getstr(d_font, "font_face", NULL);
     fv->font_code_count = font_count_max = dictcfg_getint(d_font, "font_count", 127);
     fv->font_codes = malloc(font_count_max * sizeof fv->font_codes[0]);
     if (!fv->font_codes)
@@ -1074,6 +1120,10 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
         fprintf(log_fp, "Could not load font matrix bitmap file from '%s'.\n", buf);
         goto FailExit;
     }
+    
+#ifdef DEBUG_OUTPUT_TO_SCREEN
+    DebugRawBitmap(0, 0, fv->font_matrix->BitmapData, fv->font_matrix->Width, fv->font_matrix->Height);
+#endif
 
     // Font matrix dimension
     fv->font_mat_w = fv->font_matrix->Width / fv->font_w;
@@ -1138,6 +1188,46 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
         fprintf(log_fp, "Actual count of codes read out from code file '%s' is '%zu' rather than '%zu'\n", buf, i, fv->font_code_count);
         fv->font_code_count = i;
     }
+
+    fv->font_norm_values = malloc(fv->font_code_count * sizeof fv->font_norm_values[0]);
+    if (!fv->font_norm_values)
+    {
+        fprintf(log_fp, "Could not calculate font glyph lum values: %s\n", strerror(errno));
+    }
+#pragma omp parallel for
+    for (si = 0; si < (ptrdiff_t)fv->font_code_count; si++)
+    {
+        UniformBitmap_p fm = fv->font_matrix;
+        int x, y;
+        int srcx = (si % fv->font_mat_w) * fv->font_w;
+        int srcy = (si / fv->font_mat_w) * fv->font_h;
+        float lum = 0;
+        for (y = 0; y < fv->font_h; y++)
+        {
+            uint32_t *row = fm->RowPointers[srcy + y];
+            for (x = 0; x < fv->font_w; x++)
+            {
+                union pixel
+                {
+                    uint8_t u8[4];
+                    uint32_t u32;
+                    float f32;
+                }   *font_pixel = (void *)&(row[srcx + x]);
+                float font_lum = sqrtf((float)(
+                    (uint32_t)font_pixel->u8[0] * font_pixel->u8[0] +
+                    (uint32_t)font_pixel->u8[1] * font_pixel->u8[1] +
+                    (uint32_t)font_pixel->u8[2] * font_pixel->u8[2])) / 441.672955930063709849498817084f;
+                font_lum -= 0.5f;
+                font_pixel->f32 = font_lum;
+                lum += font_lum * font_lum;
+            }
+        }
+        fv->font_norm_values[si] = sqrt(lum);
+    }
+
+#ifdef DEBUG_OUTPUT_TO_SCREEN
+    DebugRawBitmap(0, 0, fv->font_matrix->BitmapData, fv->font_matrix->Width, fv->font_matrix->Height);
+#endif
 
     free(font_raw_code);
     dict_delete(d_meta);
@@ -1209,7 +1299,11 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
     for (fy = 0; fy < fh; fy++)
     {
         int fx, sx, sy;
+        uint32_t *row = f->row[fy];
+        uint8_t *c_row = f->c_row[fy];
+        float *src_lum_buffer = malloc(font_pixel_count * sizeof src_lum_buffer[0]);
         sy = fy * fv->font_h;
+
         for (fx = 0; fx < fw; fx++)
         {
             int fmx, fmy;
@@ -1217,7 +1311,8 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             uint32_t avr_r = 0, avr_g = 0, avr_b = 0;
             size_t cur_code_index = 0;
             size_t best_code_index = 0;
-#ifdef DEBUG_OUTPUT_SCREEN
+            float src_normalize = 0;
+#ifdef DEBUG_OUTPUT_TO_SCREEN
             int best_fmx = 0;
             int best_fmy = 0;
 #endif
@@ -1228,9 +1323,32 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             // Replace the rightmost char to newline
             if (fx == fw - 1)
             {
-                f->row[fy][fx] = '\n';
+                row[fx] = '\n';
                 continue;
             }
+
+            // Compute source luminance for further use
+            for (y = 0; y < (int)fv->font_h; y++)
+            {
+                uint32_t *raw_row = f->raw_data_row[sy + y];
+                float *buf_row = &src_lum_buffer[y * fv->font_w];
+                for (x = 0; x < (int)fv->font_w; x++)
+                {
+                    union pixel
+                    {
+                        uint8_t u8[4];
+                        uint32_t u32;
+                    }   *src_pixel = (void *)&(raw_row[sx + x]);
+                    float src_lum = sqrtf((float)(
+                        (uint32_t)src_pixel->u8[0] * src_pixel->u8[0] +
+                        (uint32_t)src_pixel->u8[1] * src_pixel->u8[1] +
+                        (uint32_t)src_pixel->u8[2] * src_pixel->u8[2])) / 441.672955930063709849498817084f;
+                    src_lum -= 0.5f;
+                    buf_row[x] = src_lum;
+                    src_normalize += src_lum * src_lum;
+                }
+            }
+            src_normalize = sqrtf(src_normalize);
 
             // Iterate the font matrix
             for (fmy = 0; fmy < (int)fv->font_mat_h; fmy++)
@@ -1240,42 +1358,29 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                 {
                     int srcx = fmx * fv->font_w;
                     float score = 0;
-                    float src_normalize = 0;
-                    float font_normalize = 0;
+                    float font_normalize = fv->font_norm_values[cur_code_index];
 
                     // Compare each pixels and collect the scores.
                     for (y = 0; y < (int)fv->font_h; y++)
                     {
+                        float *buf_row = &src_lum_buffer[y * fv->font_w];
+                        float *font_row = (float *)fm->RowPointers[fm->Height - 1 - (srcy + y)];
                         for (x = 0; x < (int)fv->font_w; x++)
                         {
-                            union pixel
-                            {
-                                uint8_t u8[4];
-                                uint32_t u32;
-                            }   *src_pixel = (void *)&(f->raw_data_row[sy + y][sx + x]),
-                                *font_pixel = (void *)&(fm->RowPointers[fm->Height - 1 - (srcy + y)][srcx + x]);
-                            float src_lum = sqrtf((float)(
-                                (uint32_t)src_pixel->u8[0] * src_pixel->u8[0] +
-                                (uint32_t)src_pixel->u8[1] * src_pixel->u8[1] +
-                                (uint32_t)src_pixel->u8[2] * src_pixel->u8[2])) / 441.672955930063709849498817084f;
-                            float font_lum = font_pixel->u8[0] ? 1.0f : 0.0f;
-
-                            src_lum -= 0.5;
-                            font_lum -= 0.5;
+                            float src_lum = buf_row[x];
+                            float font_lum = font_row[srcx + x];
                             score += src_lum * font_lum;
-                            src_normalize += src_lum * src_lum;
-                            font_normalize += font_lum * font_lum;
                         }
                     }
 
                     // Do vector normalize
-                    if (src_normalize >= 0.000001f) score /= sqrtf(src_normalize);
-                    if (font_normalize >= 0.000001f) score /= sqrtf(font_normalize);
+                    if (src_normalize >= 0.000001f) score /= src_normalize;
+                    if (font_normalize >= 0.000001f) score /= font_normalize;
                     if (score > best_score)
                     {
                         best_score = score;
                         best_code_index = cur_code_index;
-#ifdef DEBUG_OUTPUT_SCREEN
+#ifdef DEBUG_OUTPUT_TO_SCREEN
                         best_fmx = fmx * fv->font_w;
                         best_fmy = fmy * fv->font_h;
 #endif
@@ -1287,22 +1392,37 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             }
 
             // The best matching char code
-            f->row[fy][fx] = fv->font_codes[best_code_index];
+            row[fx] = fv->font_codes[best_code_index];
 
             // Get the average color of the char
             for (y = 0; y < (int)fv->font_h; y++)
             {
+                uint32_t *raw_row = f->raw_data_row[sy + y];
+#ifdef DEBUG_OUTPUT_TO_SCREEN
+                float *font_row = fm->RowPointers[fm->Height - 1 - (best_fmy + y)];
+                float *buf_row = &src_lum_buffer[y * fv->font_w];
+#endif
                 for (x = 0; x < (int)fv->font_w; x++)
                 {
                     union pixel
                     {
                         uint8_t u8[4];
                         uint32_t u32;
-                    }   *src_pixel = (void *)&(f->raw_data_row[sy + y][sx + x]);
+                    }   *src_pixel = (void *)&(raw_row[sx + x]);
 
                     avr_b += src_pixel->u8[0];
                     avr_g += src_pixel->u8[1];
                     avr_r += src_pixel->u8[2];
+
+#ifdef DEBUG_OUTPUT_TO_SCREEN
+                    if (1)
+                    {
+                        uint8_t uv = (uint8_t)((font_row[best_fmx + x] + 0.5) * 255.0f);
+                        src_pixel->u8[0] = uv;
+                        src_pixel->u8[1] = uv;
+                        src_pixel->u8[2] = uv;
+                    }
+#endif
                 }
             }
 
@@ -1313,12 +1433,18 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             bright = (avr_r + avr_g + avr_b > 127 + 127 + 127);
 
             // Encode the color into 3-bit BGR with 1-bit brightness
-            f->c_row[fy][fx] =
+            c_row[fx] =
                 ((avr_b & 0x80) >> 5) |
                 ((avr_g & 0x80) >> 6) |
                 ((avr_r & 0x80) >> 7) |
                 (bright ? 0x08 : 0x00);
         }
+
+        free(src_lum_buffer);
+    }
+    if (fv->verbose)
+    {
+        fprintf(fv->log_fp, "Finished CPU rendering a frame. (%d)\n", get_thread_id());
     }
 }
 
@@ -1447,22 +1573,8 @@ static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
     fv->rendering_frame_count--;
     unlock_frame(fv);
 
-#ifdef DEBUG_OUTPUT_SCREEN
-    if (1)
-    {
-        HDC hDC = GetDC(NULL);
-        BITMAPINFOHEADER BMIF =
-        {
-            40, f->raw_w, -f->raw_h, 1, 32, 0
-        };
-        StretchDIBits(hDC, 0, 0, f->raw_w, f->raw_h,
-            0, 0, f->raw_w, f->raw_h,
-            f->raw_data,
-            (BITMAPINFO *)&BMIF,
-            DIB_RGB_COLORS,
-            SRCCOPY);
-        ReleaseDC(NULL, hDC);
-    }
+#ifdef DEBUG_OUTPUT_TO_SCREEN
+    DebugRawBitmap(0, 0, f->raw_data, f->raw_w, f->raw_h);
 #endif
 }
 
@@ -1680,6 +1792,7 @@ static fontvideo_frame_p get_frame_and_render(fontvideo_p fv)
                     if (!next)
                     {
                         fv->frame_last = NULL;
+                        fv->precached_frame_count--;
                         unlock_frame(fv);
                         return NULL;
                     }
@@ -2221,8 +2334,8 @@ int fv_show(fontvideo_p fv)
         for (;;)
         {
             if ((!fv->tailed && !do_decode(fv, 1)) ||
-                (fv->precached_frame_count > fv->rendered_frame_count && !get_frame_and_render(fv)) ||
-                (fv->rendered_frame_count && !output_rendered_video(fv, rttimer_gettime(&fv->tmr))))
+                (fv->frames && fv->precached_frame_count > fv->rendered_frame_count && !get_frame_and_render(fv)) ||
+                (fv->frames && fv->rendered_frame_count && !output_rendered_video(fv, rttimer_gettime(&fv->tmr))))
             {
                 continue;
             }
@@ -2230,7 +2343,7 @@ int fv_show(fontvideo_p fv)
             {
                 yield();
             }
-            if (fv->tailed && !fv->precached_frame_count && !fv->rendered_frame_count) break;
+            if (fv->tailed && !fv->frames) break;
         }
 
     }
@@ -2263,6 +2376,8 @@ void fv_destroy(fontvideo_p fv)
 #ifndef FONTVIDEO_NO_SOUND
     siowrap_destroy(fv->sio);
 #endif
+
+    free(fv->font_norm_values); 
 
     free(fv->font_codes);
     UB_Free(&fv->font_matrix);
