@@ -66,7 +66,7 @@ typedef struct fontvideo_struct
     char *font_face;
     uint32_t font_w, font_h;
     UniformBitmap_p font_matrix;
-    float *font_norm_values;
+    float *font_luminance_image;
     uint32_t font_mat_w;
     uint32_t font_mat_h;
     size_t font_code_count;
