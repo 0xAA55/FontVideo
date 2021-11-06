@@ -26,14 +26,7 @@ Default is output to `stdout`, but you can specify its output to a file.
 
 ## Demo
 
-![Source Picture](./demo.jpg)
-
-<style type="text/css">
-    img {
-        width: 250px;
-    }
-</style>
-
+<!-- _backgroundColor: black -->
 	gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg
 	gggggggggggggggggggggggggggggg%%%Qgggggggggggggggggggggggggggg
 	ggggggggggggggggggggggggQ%ggggQggggggg%g%ggggggggggggggggggggg
@@ -75,3 +68,4 @@ Default is output to `stdout`, but you can specify its output to a file.
 	gggggggg#%gggggggg#gggggggg#ggggggggggggg%%C'______ ____C]g]gg
 	ggggg#%ggggggggg#ggggggggg%ggggggggQgggggggQggggggg[ggggggg]gg
 
+![Source Picture](./demo.jpg)
