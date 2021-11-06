@@ -24,7 +24,9 @@ Default is output to `stdout`, but you can specify its output to a file.
         --assets-meta: [Optional] Use specified meta file, default is to use 'assets\meta.ini'.
         --log: [Optional] Specify the log file.
 
+## Demo
 
+![Source Picture](./demo.jpg)
 
 	gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg
 	gggggggggggggggggggggggggggggg%%%Qgggggggggggggggggggggggggggg
