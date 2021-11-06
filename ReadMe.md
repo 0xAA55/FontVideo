@@ -26,7 +26,13 @@ Default is output to `stdout`, but you can specify its output to a file.
 
 ## Demo
 
-![Source Picture](./demo.jpg =250x)
+![Source Picture](./demo.jpg)
+
+<style type="text/css">
+    img {
+        width: 250px;
+    }
+</style>
 
 	gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg
 	gggggggggggggggggggggggggggggg%%%Qgggggggggggggggggggggggggggg
