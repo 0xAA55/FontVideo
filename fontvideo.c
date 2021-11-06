@@ -1687,6 +1687,7 @@ static fontvideo_frame_p get_frame_and_render(fontvideo_p fv)
                     {
                         frame_delete(f);
                         f = fv->frames = next;
+                        fv->precached_frame_count--;
                         continue;
                     }
                 }
@@ -1695,6 +1696,7 @@ static fontvideo_frame_p get_frame_and_render(fontvideo_p fv)
                     prev->next = next;
                     frame_delete(f);
                     f = next;
+                    fv->precached_frame_count--;
                     continue;
                 }
             }
