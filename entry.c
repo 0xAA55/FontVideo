@@ -17,14 +17,22 @@ void usage(char *argv0)
         "Or: %s <input>\n"
         "\t-i: Specify the input video file name.\n"
         "\t-o: [Optional] Specify the output text file name.\n"
-        "\t-v: Verbose mode, output debug informations.\n"
+        "\t-v: [Optional] Verbose mode, output debug informations.\n"
+        "\t  Alias: --verbose\n"
         "\t-p: [Optional] Specify pre-render seconds, Longer value results longer delay but better quality.\n"
-        "\t-m: Mute sound output.\n"
+        "\t  Alias: --pre-render\n"
+        "\t-m: [Optional] Mute sound output.\n"
+        "\t  Aliases: --mute, --no-sound, --no-audio\n"
         "\t-w: [Optional] Width of the output.\n"
+        "\t  Alias: --width\n"
         "\t-h: [Optional] Height of the output.\n"
+        "\t  Alias: --height\n"
         "\t-s: [Optional] Size of the output, default is to detect the size of the console window, or 80x25 if failed.\n"
+        "\t  Alias: --size\n"
         "\t-b: Only do white-black output.\n"
+        "\t  Alias: --black-white\n"
         "\t-S: [Optional] Set the playback start time of seconds.\n"
+        "\t  Alias: --start-time\n"
         "\t--log: [Optional] Specify the log file.\n"
         "\t--invert-color: [Optional] Do color invert.\n"
         "\t--no-opengl: [Optional] Do not use OpenGL to accelerate rendering.\n"
@@ -111,45 +119,46 @@ int main(int argc, char **argv)
                 }
                 mute = 1;
                 real_time_show = 0;
+                no_frameskip = 1;
             }
-            else if (!strcmp(argv[i], "-v"))
+            else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--verbose"))
             {
                 i++;
                 verbose = 1;
             }
-            else if (!strcmp(argv[i], "-p"))
+            else if (!strcmp(argv[i], "-p") || !strcmp(argv[i], "--pre-render"))
             {
                 if (++i >= argc) goto BadUsageExit;
                 prerender_secs = atof(argv[i++]);
             }
-            else if (!strcmp(argv[i], "-m"))
+            else if (!strcmp(argv[i], "-m") || !strcmp(argv[i], "--mute") || !strcmp(argv[i], "--no-sound") || !strcmp(argv[i], "--no-audio"))
             {
                 i++;
                 mute = 1;
             }
-            else if (!strcmp(argv[i], "-w"))
+            else if (!strcmp(argv[i], "-w") || !strcmp(argv[i], "--width"))
             {
                 if (++i >= argc) goto BadUsageExit;
                 output_width = atoi(argv[i++]);
             }
-            else if (!strcmp(argv[i], "-h"))
+            else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--height"))
             {
                 if (++i >= argc) goto BadUsageExit;
                 output_height = atoi(argv[i++]);
             }
-            else if (!strcmp(argv[i], "-s"))
+            else if (!strcmp(argv[i], "-s") || !strcmp(argv[i], "--size"))
             {
                 if (++i >= argc) goto BadUsageExit;
                 output_width = atoi(argv[i++]);
                 if (i >= argc) goto BadUsageExit;
                 output_height = atoi(argv[i++]);
             }
-            else if (!strcmp(argv[i], "-b"))
+            else if (!strcmp(argv[i], "-b") || !strcmp(argv[i], "--black-white"))
             {
                 i++;
                 no_colors = 1;
             }
-            else if (!strcmp(argv[i], "-S"))
+            else if (!strcmp(argv[i], "-S") || !strcmp(argv[i], "--start-time"))
             {
                 if (++i >= argc) goto BadUsageExit;
                 start_sec = atof(argv[i++]);
