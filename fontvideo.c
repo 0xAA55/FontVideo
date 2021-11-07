@@ -2,7 +2,6 @@
 
 #ifdef FONTVIDEO_ALLOW_OPENGL
 #include<GL/glew.h>
-#include<GLFW/glfw3.h>
 #endif
 
 #ifdef _WIN32
@@ -10,6 +9,10 @@
 #include<GL/wglew.h>
 #endif
 #include<Windows.h>
+#endif
+
+#ifdef FONTVIDEO_ALLOW_OPENGL
+#include<GLFW/glfw3.h>
 #endif
 
 #include<stdlib.h>
@@ -86,9 +89,8 @@ static void init_console(fontvideo_p fv)
         if (fv->font_face && strlen(fv->font_face))
         {
             CONSOLE_FONT_INFOEX cfi = {0};
-            size_t i = 0;
             char *src_face = fv->font_face;
-            wchar_t *dst_face = &cfi.FaceName;
+            uint16_t *dst_face = &cfi.FaceName[0];
             uint32_t uchar = 0;
 
             cfi.cbSize = sizeof cfi;
@@ -364,6 +366,7 @@ static GLuint create_shader_program(FILE *compiler_output, const char *vs_code, 
             glGetInfoLogARB(program, log_length, &log_length, log_info);
             fputs(log_info, compiler_output);
             free(log_info);
+            fputs("\n", compiler_output);
         }
     }
 
@@ -376,14 +379,68 @@ FailExit:
     return 0;
 }
 
-#endif
+static void set_match_shader_uniforms(fontvideo_p fv)
+{
+    int Location;
+    opengl_data_p gld = fv->opengl_data;
+
+    Location = glGetUniformLocation(gld->match_shader, "Resolution"); // assert(Location >= 0);
+    glUniform2i(Location, gld->match_width, gld->match_height);
+
+    Location = glGetUniformLocation(gld->match_shader, "FontMatrix"); // assert(Location >= 0);
+    glUniform1i(Location, 0);
+
+    Location = glGetUniformLocation(gld->match_shader, "FontMatrixCodeCount"); // assert(Location >= 0);
+    glUniform1i(Location, (GLint)fv->font_code_count);
+
+    Location = glGetUniformLocation(gld->match_shader, "FontMatrixSize"); // assert(Location >= 0);
+    glUniform2i(Location, fv->font_mat_w, fv->font_mat_h);
+
+    Location = glGetUniformLocation(gld->match_shader, "GlyphSize"); // assert(Location >= 0);
+    glUniform2i(Location, fv->font_w, fv->font_h);
+
+    Location = glGetUniformLocation(gld->match_shader, "ConsoleSize"); // assert(Location >= 0);
+    glUniform2i(Location, fv->output_w, fv->output_h);
+
+    Location = glGetUniformLocation(gld->match_shader, "SrcColor"); // assert(Location >= 0);
+    glUniform1i(Location, 1);
+
+    Location = glGetUniformLocation(gld->match_shader, "SrcInvert"); // assert(Location >= 0);
+    glUniform1i(Location, fv->do_color_invert);
+}
+
+static void set_final_shader_uniforms(fontvideo_p fv)
+{
+    int Location;
+    opengl_data_p gld = fv->opengl_data;
+
+    Location = glGetUniformLocation(gld->final_shader, "Resolution"); // assert(Location >= 0);
+    glUniform2i(Location, gld->final_width, gld->final_height);
+
+    Location = glGetUniformLocation(gld->final_shader, "MatchTexSize"); // assert(Location >= 0);
+    glUniform2i(Location, gld->match_width, gld->match_height);
+
+    Location = glGetUniformLocation(gld->final_shader, "MatchTex"); // assert(Location >= 0);
+    glUniform1i(Location, 2);
+
+    Location = glGetUniformLocation(gld->final_shader, "FontMatrixCodeCount"); // assert(Location >= 0);
+    glUniform1i(Location, (GLint)fv->font_code_count);
+
+    Location = glGetUniformLocation(gld->final_shader, "GlyphSize"); // assert(Location >= 0);
+    glUniform2i(Location, fv->font_w, fv->font_h);
+
+    Location = glGetUniformLocation(gld->final_shader, "ConsoleSize"); // assert(Location >= 0);
+    glUniform2i(Location, fv->output_w, fv->output_h);
+
+    Location = glGetUniformLocation(gld->final_shader, "SrcColor"); // assert(Location >= 0);
+    glUniform1i(Location, 1);
+
+    Location = glGetUniformLocation(gld->final_shader, "SrcInvert"); // assert(Location >= 0);
+    glUniform1i(Location, fv->do_color_invert);
+}
 
 int fv_allow_opengl(fontvideo_p fv)
 {
-#ifndef FONTVIDEO_ALLOW_OPENGL
-    fprintf(fv->log_fp, "Macro `FONTVIDEO_ALLOW_OPENGL` not defined when compiling, giving up using OpenGL.\n");
-    return 0;
-#else
     glctx_p glctx = NULL;
     opengl_data_p gld = NULL;
     size_t size;
@@ -537,6 +594,7 @@ int fv_allow_opengl(fontvideo_p fv)
         "uniform ivec2 GlyphSize;"
         "uniform ivec2 ConsoleSize;"
         "uniform sampler2D SrcColor;"
+        "uniform int SrcInvert;"
         "void main()"
         "{"
         "    ivec2 FragCoord = ivec2(TexCoord * vec2(Resolution));"
@@ -564,6 +622,7 @@ int fv_allow_opengl(fontvideo_p fv)
         "                ivec2 xy = ivec2(x, y);"
         "                float SrcLum = length(texelFetch(SrcColor, GraphicalCoord + xy, 0).rgb);"
         "                float GlyphLum = length(texelFetch(FontMatrix, GlyphPos + xy, 0).rgb);"
+        "                if (SrcInvert != 0) SrcLum = 1.0 - SrcLum;"
         "                SrcLum -= 0.5;"
         "                GlyphLum -= 0.5;"
         "                Score += SrcLum * GlyphLum;"
@@ -648,6 +707,7 @@ int fv_allow_opengl(fontvideo_p fv)
         "uniform ivec2 GlyphSize;"
         "uniform ivec2 ConsoleSize;"
         "uniform sampler2D SrcColor;"
+        "uniform int SrcInvert;"
         "uniform vec3 Palette[16] ="
         "{"
         "    vec3(0.0, 0.0, 0.0),"
@@ -690,17 +750,17 @@ int fv_allow_opengl(fontvideo_p fv)
         "    }"
         "    vec3 AvrColor = vec3(0);"
         "    ivec2 BaseCoord = FragCoord * GlyphSize;"
-        "    int PixelCount = 0;"
+        "    int PixelCount = GlyphSize.x * GlyphSize.y;"
         "    for(int y = 0; y < GlyphSize.y; y++)"
         "    {"
         "        for(int x = 0; x < GlyphSize.x; x++)"
         "        {"
         "            ivec2 xy = ivec2(x, y);"
         "            AvrColor += texelFetch(SrcColor, BaseCoord + xy, 0).rgb;"
-        "            PixelCount ++;"
         "        }"
         "    }"
         "    AvrColor /= PixelCount;"
+        "    if (SrcInvert != 0) AvrColor = vec3(1) - AvrColor;"
         "    Output = BestGlyph;"
         "    Color = 0;"
         "    float ColorMinDist = 999999.9;"
@@ -763,52 +823,6 @@ int fv_allow_opengl(fontvideo_p fv)
     glActiveTexture(GL_TEXTURE0 + 3); glBindTexture(GL_TEXTURE_2D, gld->final_texture);
     glActiveTexture(GL_TEXTURE0 + 4); glBindTexture(GL_TEXTURE_2D, gld->final_texture_c);
 
-    glUseProgram(gld->match_shader);
-
-    Location = glGetUniformLocation(gld->match_shader, "Resolution"); // assert(Location >= 0);
-    glUniform2i(Location, gld->match_width, gld->match_height);
-
-    Location = glGetUniformLocation(gld->match_shader, "FontMatrix"); // assert(Location >= 0);
-    glUniform1i(Location, 0);
-
-    Location = glGetUniformLocation(gld->match_shader, "FontMatrixCodeCount"); // assert(Location >= 0);
-    glUniform1i(Location, (GLint)fv->font_code_count);
-
-    Location = glGetUniformLocation(gld->match_shader, "FontMatrixSize"); // assert(Location >= 0);
-    glUniform2i(Location, fv->font_mat_w, fv->font_mat_h);
-
-    Location = glGetUniformLocation(gld->match_shader, "GlyphSize"); // assert(Location >= 0);
-    glUniform2i(Location, fv->font_w, fv->font_h);
-
-    Location = glGetUniformLocation(gld->match_shader, "ConsoleSize"); // assert(Location >= 0);
-    glUniform2i(Location, fv->output_w, fv->output_h);
-
-    Location = glGetUniformLocation(gld->match_shader, "SrcColor"); // assert(Location >= 0);
-    glUniform1i(Location, 1);
-
-    glUseProgram(gld->final_shader);
-
-    Location = glGetUniformLocation(gld->final_shader, "Resolution"); // assert(Location >= 0);
-    glUniform2i(Location, gld->final_width, gld->final_height);
-
-    Location = glGetUniformLocation(gld->final_shader, "MatchTexSize"); // assert(Location >= 0);
-    glUniform2i(Location, gld->match_width, gld->match_height);
-
-    Location = glGetUniformLocation(gld->final_shader, "MatchTex"); // assert(Location >= 0);
-    glUniform1i(Location, 2);
-
-    Location = glGetUniformLocation(gld->final_shader, "FontMatrixCodeCount"); // assert(Location >= 0);
-    glUniform1i(Location, (GLint)fv->font_code_count);
-
-    Location = glGetUniformLocation(gld->final_shader, "GlyphSize"); // assert(Location >= 0);
-    glUniform2i(Location, fv->font_w, fv->font_h);
-
-    Location = glGetUniformLocation(gld->final_shader, "ConsoleSize"); // assert(Location >= 0);
-    glUniform2i(Location, fv->output_w, fv->output_h);
-
-    Location = glGetUniformLocation(gld->final_shader, "SrcColor"); // assert(Location >= 0);
-    glUniform1i(Location, 1);
-
     glUseProgram(0);
 
     glctx_UnMakeCurrent(glctx);
@@ -823,8 +837,14 @@ FailExit:
     fprintf(fv->log_fp, "Giving up using OpenGL.\n");
     fv->allow_opengl = 0;
     return 0;
-#endif
 }
+#else
+int fv_allow_opengl(fontvideo_p fv)
+{
+    fprintf(fv->log_fp, "Macro `FONTVIDEO_ALLOW_OPENGL` not defined when compiling, giving up using OpenGL.\n");
+    return 0;
+}
+#endif
 
 static int get_thread_id()
 {
@@ -913,6 +933,10 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
     ptrdiff_t i;
     fontvideo_p fv = s->userdata;
 
+#ifdef _MSC_VER
+    sample_rate;
+#endif
+
     // Destination pointer
     float *dptr = pointers_per_channel[0]; // Mono
     float *dptr_l = dptr; // Stereo left
@@ -961,7 +985,7 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
         size_t wrote = 0; // Total frames wrote
 
         // Do audio piece skip
-        if (next)
+        if (!fv->no_frameskip && next)
         {
             if (current_time > next->timestamp)
             {
@@ -1201,9 +1225,9 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
     for (si = 0; si < (ptrdiff_t)fv->font_code_count; si++)
     {
         UniformBitmap_p fm = fv->font_matrix;
-        int x, y;
-        int srcx = (si % fv->font_mat_w) * fv->font_w;
-        int srcy = (si / fv->font_mat_w) * fv->font_h;
+        uint32_t x, y;
+        int srcx = (int)((si % fv->font_mat_w) * fv->font_w);
+        int srcy = (int)((si / fv->font_mat_w) * fv->font_h);
         float *lum_of_glyph = &fv->font_luminance_image[si * font_pixel_count];
         float lum = 0;
         for (y = 0; y < fv->font_h; y++)
@@ -1348,7 +1372,12 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                         uint8_t u8[4];
                         uint32_t u32;
                     }   *src_pixel = (void *)&(raw_row[sx + x]);
-                    float src_lum = sqrtf((float)(
+                    float src_lum;
+                    if (fv->do_color_invert)
+                    {
+                        src_pixel->u32 ^= 0xffffff;
+                    }
+                    src_lum = sqrtf((float)(
                         (uint32_t)src_pixel->u8[0] * src_pixel->u8[0] +
                         (uint32_t)src_pixel->u8[1] * src_pixel->u8[1] +
                         (uint32_t)src_pixel->u8[2] * src_pixel->u8[2])) / 441.672955930063709849498817084f;
@@ -1363,14 +1392,14 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             for (cur_code_index = 0; cur_code_index < fv->font_code_count; cur_code_index++)
             {
                 float score = 0;
-                float *font_lum = &fv->font_luminance_image[cur_code_index * font_pixel_count];
+                float *font_lum_img = &fv->font_luminance_image[cur_code_index * font_pixel_count];
 
                 // Compare each pixels and collect the scores.
                 for (y = 0; y < (int)fv->font_h; y++)
                 {
                     size_t row_start = (size_t)y * fv->font_w;
                     float *buf_row = &src_lum_buffer[row_start];
-                    float *font_row = &font_lum[row_start];
+                    float *font_row = &font_lum_img[row_start];
                     for (x = 0; x < (int)fv->font_w; x++)
                     {
                         float src_lum = buf_row[x];
@@ -1495,6 +1524,7 @@ static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
     assert(glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
 
     glUseProgram(gld->match_shader);
+    set_match_shader_uniforms(fv);
     glBindVertexArray(gld->Quad_VAO);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
@@ -1512,6 +1542,7 @@ static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
     assert(glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
 
     glUseProgram(gld->final_shader);
+    set_final_shader_uniforms(fv);
     glBindVertexArray(gld->Quad_VAO);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
@@ -1780,7 +1811,7 @@ static fontvideo_frame_p get_frame_and_render(fontvideo_p fv)
             double lagged_time = cur_time - f->timestamp;
             double last_output_to_now = cur_time - fv->last_output_time;
             // If the frame isn't being rendered, first detect if it's too late to render it, then do frame skipping.
-            if (fv->real_time_play && fv->prepared && lagged_time >= 1.0 && last_output_to_now >= 0.5)
+            if (!fv->no_frameskip && fv->real_time_play && fv->prepared && lagged_time >= 1.0 && last_output_to_now >= 0.5)
             {
                 fprintf(fv->log_fp, "Discarding frame to render due to lag (%lf seconds). (%d)\n", lagged_time, get_thread_id());
                 
@@ -1865,7 +1896,7 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
         {
             next = cur->next;
             if (!next) break;
-            if (timestamp >= cur->timestamp)
+            if (!fv->no_frameskip && timestamp >= cur->timestamp)
             {
                 // Timestamp arrived
                 if (timestamp < next->timestamp) break;

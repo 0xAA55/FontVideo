@@ -13,7 +13,7 @@
 
 void usage(char *argv0)
 {
-    fprintf(stderr, "Usage: %s -i <input> [-o output.txt] [-v] [-p seconds] [-m] [-w width] [-h height] [-s width height] [-S from_sec] [-b] [--no-opengl] [--assets-meta metafile.ini]\n"
+    fprintf(stderr, "Usage: %s -i <input> [-o output.txt] [-v] [-p seconds] [-m] [-w width] [-h height] [-s width height] [-S from_sec] [-b] [--invert-color] [--no-opengl] [--no-frameskip] [--assets-meta metafile.ini]\n"
         "Or: %s <input>\n"
         "\t-i: Specify the input video file name.\n"
         "\t-o: [Optional] Specify the output text file name.\n"
@@ -25,9 +25,11 @@ void usage(char *argv0)
         "\t-s: [Optional] Size of the output, default is to detect the size of the console window, or 80x25 if failed.\n"
         "\t-b: Only do white-black output.\n"
         "\t-S: [Optional] Set the playback start time of seconds.\n"
-        "\t--no-opengl: [Optional] Do not use OpenGL to accelerate rendering.\n"
-        "\t--assets-meta: [Optional] Use specified meta file, default is to use 'assets"SUBDIR"meta.ini'.\n"
         "\t--log: [Optional] Specify the log file.\n"
+        "\t--invert-color: [Optional] Do color invert.\n"
+        "\t--no-opengl: [Optional] Do not use OpenGL to accelerate rendering.\n"
+        "\t--no-frameskip: [Optional] Do not skip frames, which may cause video and audio could not sync.\n"
+        "\t--assets-meta: [Optional] Use specified meta file, default is to use 'assets"SUBDIR"meta.ini'.\n"
         "", argv0, argv0);
 }
 
@@ -44,8 +46,10 @@ int main(int argc, char **argv)
     double start_sec = -1.0;
     int output_width = 80;
     int output_height = 25;
+    int do_color_invert = 0;
     int no_colors = 0;
     int no_opengl = 0;
+    int no_frameskip = 0;
     char *assets_meta = "assets"SUBDIR"meta.ini";
     FILE *fp_log = stderr;
 
@@ -148,10 +152,20 @@ int main(int argc, char **argv)
                 if (++i >= argc) goto BadUsageExit;
                 start_sec = atof(argv[i++]);
             }
+            else if (!strcmp(argv[i], "--invert-color"))
+            {
+                i++;
+                do_color_invert = 1;
+            }
             else if (!strcmp(argv[i], "--no-opengl"))
             {
                 i++;
                 no_opengl = 1;
+            }
+            else if (!strcmp(argv[i], "--no-frameskip"))
+            {
+                i++;
+                no_frameskip = 1;
             }
             else if (!strcmp(argv[i], "--assets-meta"))
             {
@@ -200,9 +214,11 @@ int main(int argc, char **argv)
 
     fv = fv_create(input_file, fp_log, verbose, fp_out, assets_meta, output_width, output_height, prerender_secs, !mute, start_sec);
     if (!fv) goto FailExit;
-    if (no_colors) fv->do_colored_output = 0;
 
+    if (no_colors) fv->do_colored_output = 0;
     if (!no_opengl) fv_allow_opengl(fv);
+    if (no_frameskip) fv->no_frameskip = 1;
+    if (do_color_invert) fv->do_color_invert = 1;
 
     if (real_time_show)
         fv_show(fv);
