@@ -26,46 +26,45 @@ Default is output to `stdout`, but you can specify its output to a file.
 
 ## Demo
 
-<!-- _backgroundColor: black -->
-	gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg
-	gggggggggggggggggggggggggggggg%%%Qgggggggggggggggggggggggggggg
-	ggggggggggggggggggggggggQ%ggggQggggggg%g%ggggggggggggggggggggg
-	gggggggggggggggggggggQgQgggggggg%gggggggQggggggggggggggggggggg
-	ggggggggggggggggggggggQggggggggg%gggg%gggQQggggggggggggggggggg
-	ggggggggggggggggggggggQggggggQgg%g%gggQggggggggggggggggggggggg
-	ggggggggggggggggggQg%gQggggg%g%%ggggggg%gggQgggggggggggggggggg
-	gggggggggggggggggggQggg%ggggQg%gggggggggggQg%ggggggggggggggggg
-	gggggggggggggggggggQgggg%%ggggggggQ%QgggQg%gg%gggggggggggggggg
-	gggggggggggggggggggQggggggQggggC___ggggg%%Qggg%ggggggggggggggg
-	ggggggggggggggggggggggg%g__ggggggggggggQ%gQ%gQg%gggggggggggggg
-	ggggggggggggggggggggg%QggQgggggggQgggggC%%gg%%%QQggggggggggggg
-	gggggggggggggggggggggggg%g%Qgggggg#Qggg   g ']Q%gggggggggggggg
-	gggggggggggggggggggggggggQmQg-'%%_ggggg   3gQQgggQgggggggggggg
-	gggggggggggggggggggggggggggg%g  #M[M%gg   y%gggggQgggggggggggg
-	gggggggggggggggggggggQggggggUQ_  5% Mgg _/Kggggggg%Qgggggggggg
-	gggggggggggggggggggggggg%gggggg]_Q;/ ggWW'g%ggggQgg%gggggggggg
-	gggggggggggggggggggggQggQM'   '{'-u%=QgA_gggQggQgg%gQggggggggg
-	ggggggggggggggggggg%M'7M#        'sMgggggggg%ggggggggggggggggg
-	gggggggggggggggggg%      W         Mgg%ggg%gg%gg%gWggggggggggg
-	gggggggggggggggg#'       k          '%gQgQgg%MggQggQgggggggggg
-	ggggggggggggggg%         MW           Mgg%ggggQg%gg%ggQggggggg
-	ggggggggg#M%'''           g               K%#'Mg%gggg%%%%%%%%%
-	ggggg%#%                  gy             mw_   ?ggggg%%Qg%%Qg%
-	g#% '                     #g_            ]_+q    %ggg%%gQgg#%g
-	                   _      ]gg          _ggggg'    %gggggg#gggg
-	            /     gggggggggQgy     ___gggggg%Q    %gggg%%%%%%M
-	[]       qm'      %ggggggggQgg     ggggggggggMCg   QQggggggg%%
-	_K/     _w/       ggggggggggggy    gggggggggggg_YK 'ggQg%gg%gg
-	K'?M#M?'          g%ggggggggggg    ]gggggggggggg 'y_%QgQ%%gggg
-	               -  _Qggggggggg%gW   ]gggggggggggK  'Wg_'7MQgggg
-	           _ggggggggQggggggg[;     Mgggggggggg%gggggg]]m;I_ggg
-	g_____gC   ]%ggggggggg%%gggggggg    %ggggggg#Qgggggggggggggggg
-	g%%ggg%    gggg%QggggggggQQQ%%gg     %gg%gggggggggggggggggggg%
-	ggggg[     #gggg%gggggQggggQggg%     ?%%%%%%%%%%%%%%%%%%%%gggg
-	%gggg#      ']%QM%%%gggggggggggE      gggggggggggggggggggggg%%
-	ggggggg__gggg%Mg%Q%ggQ#gggggg%'      {%%%%g%%?%%[%%#g%%%%ggggg
-	g%QggggggggMgQgggggggggggggg_      _gggggMM[_  aM'   ' ]#%g[gg
-	gggggggg#%gggggggg#gggggggg#ggggggggggggg%%C'______ ____C]g]gg
-	ggggg#%ggggggggg#ggggggggg%ggggggggQgggggggQggggggg[ggggggg]gg
+	                                                    
+	                                                    
+	                                                    
+	                                                    
+	                                                    
+	                                                    
+	                                                    
+	                                 '                  
+	                             _                      
+	                          m#%%                      
+	                    M%M                             
+	                  '              g_                 
+	                             y   ggC%gw_            
+	                        Ymw %    ggg'7/             
+	                       { Qg;ww_  %%7 '   '          
+	                         ]gQgmg  g7''               
+	                        ! OQUQg  _W#                
+	                    !_ggggQQg_;  '#                 
+	                 ggg_ggggggQgkAk '   '              
+	               _gggggYggggQgg%            [         
+	              ggggggg ggggg%ggg_                    
+	             gggggggg[%ggggg%gg%y _   '             
+	        _gggggggggg%g]'gggggQggggWgQ__g             
+	    __gggggggggggggggg Qgggggggggg%_%ggg     mW    q
+	 _gggg%%gggQgggggggggg  gggggggggg#%QWggg_  ]gyA''-M
+	ggggggggggggggggQggggQ  ]gggggggg#   'gggg  ?%      
+	gggggggggQQgggg   ''''   gggg%%#'     %gggC  ' g_gg}
+	%QggggggCYggggQ          %ggg[        g-%Qg    'M#gg
+	qggggg%#[QggQgQ        [ 3ggg[         %gQgy        
+	]ggggggg%ggQ%gQ        !  ggg}          ]gMg_       
+	ggg%%%%QgggQggg9k      !  ]gg]          ggg_Mggc  ''
+	ggggggggggMMMM'         %%%ggg         /   'Mw[#g7  
+	MM%Q%Mggg[              '''gggy                     
+	M;    ggg                  gggQ                     
+	   7mggggE                 Q%ggk                    
+	     %ggg%gmw             ]ggggg                   _
+	    ;MM#%% _w'/YY'_7''7YMg%ggggkmmw wgggg    gg M]  
+	 ;-'     ;K   '''y'    MgggggQ''   ;Umgggggggg#_ q  
+	'      w'       '      y'' '' /     qWQ%#%%%%#Y%WM  
+	     Y        /       /      y      /  ''''['''  M  
 
 ![Source Picture](./demo.jpg)
