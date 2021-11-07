@@ -1595,8 +1595,10 @@ static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
 {
     if (f->rendered) return;
 
+    lock_frame(fv);
     fv->rendering_frame_count++;
     f->rendering_start_time = rttimer_gettime(&fv->tmr);
+    unlock_frame(fv);
 
 #ifdef FONTVIDEO_ALLOW_OPENGL
     if (fv->allow_opengl && fv->opengl_context && fv->opengl_data) do_gpu_render(fv, f); else
@@ -2343,6 +2345,7 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
         }
 
         fprintf(fv->graphics_out_fp, "%u\n", cur->index);
+        if (!fv->real_time_play) fprintf(stderr, "%u\r", cur->index);
         lock_frame(fv);
         fv->frames = next;
         if (!next)
@@ -2584,6 +2587,7 @@ int fv_render(fontvideo_p fv)
 #endif
 
     if (!fv) return 0;
+    // if (!fv->real_time_play) run_mt = 0;
 
     if (run_mt && fv->allow_opengl && fv->opengl_context && fv->opengl_data)
     {
