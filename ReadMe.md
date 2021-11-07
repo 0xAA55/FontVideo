@@ -12,14 +12,22 @@ Default is output to `stdout`, but you can specify its output to a file.
 	Or: FontVideo.exe <input>
 		-i: Specify the input video file name.
 		-o: [Optional] Specify the output text file name.
-		-v: Verbose mode, output debug informations.
+		-v: [Optional] Verbose mode, output debug informations.
+		  Alias: --verbose
 		-p: [Optional] Specify pre-render seconds, Longer value results longer delay but better quality.
-		-m: Mute sound output.
+		  Alias: --pre-render
+		-m: [Optional] Mute sound output.
+		  Aliases: --mute, --no-sound, --no-audio
 		-w: [Optional] Width of the output.
+		  Alias: --width
 		-h: [Optional] Height of the output.
+		  Alias: --height
 		-s: [Optional] Size of the output, default is to detect the size of the console window, or 80x25 if failed.
+		  Alias: --size
 		-b: Only do white-black output.
+		  Alias: --black-white
 		-S: [Optional] Set the playback start time of seconds.
+		  Alias: --start-time
 		--log: [Optional] Specify the log file.
 		--invert-color: [Optional] Do color invert.
 		--no-opengl: [Optional] Do not use OpenGL to accelerate rendering.
