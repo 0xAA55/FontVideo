@@ -238,7 +238,11 @@ int main(int argc, char **argv)
     if (output_frame_images_prefix) fv->output_frame_images_prefix = output_frame_images_prefix;
 
     if (real_time_show) fv_show(fv);
-    else fv_render(fv);
+    else
+    {
+        fv->real_time_play = 0;
+        fv_render(fv);
+    }
 
     fv_destroy(fv);
     if (fp_out != stdout && fp_out != NULL) fclose(fp_out);
