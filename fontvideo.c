@@ -2277,6 +2277,7 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                         {
                             int new_color = c_row[x];
                             uint32_t char_code = fv->font_codes[row[x]];
+                            if (x == cur->w - 1) char_code = '\n';
                             if (new_color != cur_color && char_code != ' ')
                             {
                                 cur_color = new_color;
@@ -2294,17 +2295,18 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
             }
             else
             {
+                char *u8chr = fv->utf8buf;
                 for (y = 0; y < (int)cur->h; y++)
                 {
-                    char *u8chr = fv->utf8buf;
                     uint32_t *row = cur->row[y];
                     for (x = 0; x < (int)cur->w; x++)
                     {
                         u32toutf8(&u8chr, fv->font_codes[row[x]]);
                     }
-                    *u8chr = '\0';
-                    fputs(fv->utf8buf, fv->graphics_out_fp);
+                    *u8chr++ = '\n';
                 }
+                *u8chr = '\0';
+                fputs(fv->utf8buf, fv->graphics_out_fp);
             }
 
 #pragma omp section
@@ -2366,14 +2368,15 @@ static int do_decode(fontvideo_p fv, int keeprun)
         if (atomic_exchange(&fv->doing_decoding, 1)) return 0;
 
         lock_frame(fv);
-        while (!fv->tailed && (
+        while (!fv->tailed && ((fv->real_time_play && (
             !fv->frame_last || (fv->frame_last && fv->frame_last->timestamp < target_timestamp) ||
 #ifndef FONTVIDEO_NO_SOUND
             (fv->do_audio_output &&
-            (!fv->audio_last || (fv->audio_last && fv->audio_last->timestamp < target_timestamp)))))
+            (!fv->audio_last || (fv->audio_last && fv->audio_last->timestamp < target_timestamp))))) ||
 #else
-            0))
+            0)) ||
 #endif
+            !fv->real_time_play))
         {
             unlock_frame(fv);
             if (fv->verbose)
@@ -2432,7 +2435,7 @@ fontvideo_p fv_create
     fv->graphics_out_fp = graphics_out_fp;
     fv->do_audio_output = do_audio_output;
 
-    if (log_fp == stdout || log_fp == stderr || graphics_out_fp == stdout || graphics_out_fp == stderr)
+    if (graphics_out_fp == stdout || graphics_out_fp == stderr)
     {
         fv->do_colored_output = 1;
         fv->real_time_play = 1;
@@ -2447,7 +2450,7 @@ fontvideo_p fv_create
     fv->precache_seconds = precache_seconds;
 
     if (!load_font(fv, "assets", assets_meta_file)) goto FailExit;
-    if (fv->need_chcp || fv->real_time_play)
+    if (fv->need_chcp || fv->real_time_play || log_fp == stdout || log_fp == stderr)
     {
         init_console(fv);
     }
@@ -2563,6 +2566,14 @@ int fv_show_prepare(fontvideo_p fv)
 
 int fv_show(fontvideo_p fv)
 {
+    if (!fv) return 0;
+    if (!fv->prepared) fv_show_prepare(fv);
+    fv->real_time_play = 1;
+    return fv_render(fv);
+}
+
+int fv_render(fontvideo_p fv)
+{
 #ifdef _OPENMP
     int run_mt = 1;
 #else
@@ -2570,10 +2581,6 @@ int fv_show(fontvideo_p fv)
 #endif
 
     if (!fv) return 0;
-
-    if (!fv->prepared) fv_show_prepare(fv);
-
-    fv->real_time_play = 1;
 
     if (run_mt && fv->allow_opengl && fv->opengl_context && fv->opengl_data)
     {
@@ -2587,7 +2594,7 @@ int fv_show(fontvideo_p fv)
                     if (!do_decode(fv, 1)) break;
                 }
                 yield();
-                if (fv->tailed && !fv->precached_frame_count && !fv->rendering_frame_count && !fv->rendered_frame_count) break;
+                if (fv->tailed && !fv->frames) break;
             }
 #pragma omp section
             for (;;)
@@ -2597,7 +2604,7 @@ int fv_show(fontvideo_p fv)
                     fontvideo_frame_p f = get_frame_and_render(fv);
                     if (!f) yield();
                 }
-                if (fv->tailed && !fv->precached_frame_count && !fv->rendering_frame_count && !fv->rendered_frame_count) break;
+                if (fv->tailed && !fv->frames) break;
             }
 #pragma omp section
             for (;;)
@@ -2610,7 +2617,7 @@ int fv_show(fontvideo_p fv)
                 {
                     yield();
                 }
-                if (fv->tailed && !fv->precached_frame_count && !fv->rendering_frame_count && !fv->rendered_frame_count) break;
+                if (fv->tailed && !fv->frames) break;
             }
         }
     }
@@ -2630,7 +2637,7 @@ int fv_show(fontvideo_p fv)
             {
                 output_rendered_video(fv, rttimer_gettime(&fv->tmr));
             }
-            if (fv->tailed && !fv->precached_frame_count && !fv->rendered_frame_count) break;
+            if (fv->tailed && !fv->frames) break;
         }
     }
     else
@@ -2653,24 +2660,8 @@ int fv_show(fontvideo_p fv)
 
     }
 #ifndef FONTVIDEO_NO_SOUND
-    while (fv->audios || fv->audio_last) yield();
+    while (fv->do_audio_output && (fv->audios || fv->audio_last)) yield();
 #endif
-    return 1;
-}
-
-int fv_render(fontvideo_p fv)
-{
-    if (!fv) return 0;
-    for (;;)
-    {
-        if (!fv->tailed)
-        {
-            avdec_decode(fv->av, fv_on_get_video, fv->do_audio_output ? fv_on_get_audio : NULL);
-        }
-        get_frame_and_render(fv);
-        if (fv->tailed && !output_rendered_video(fv, -1))
-            break;
-    }
     return 1;
 }
 
@@ -2683,7 +2674,6 @@ void fv_destroy(fontvideo_p fv)
 #endif
 
     free(fv->font_luminance_image);
-
     free(fv->font_codes);
     UB_Free(&fv->font_matrix);
     avdec_close(&fv->av);
