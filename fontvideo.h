@@ -60,6 +60,8 @@ typedef struct fontvideo_struct
     int do_colored_output;
     uint32_t output_w, output_h;
     int allow_opengl;
+    int no_frameskip;
+    int do_color_invert;
     void *opengl_context;
     void *opengl_data;
 
