@@ -14,6 +14,7 @@ fontvideo
 *.log
 .vs
 out
+test.txt
 msvc/.vs/
 */intermediate/
 */out
