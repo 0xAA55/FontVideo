@@ -1221,6 +1221,8 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
         fprintf(log_fp, "Could not calculate font glyph lum values: %s\n", strerror(errno));
         goto FailExit;
     }
+
+    fv->font_is_blackwhite = 1;
 #pragma omp parallel for
     for (si = 0; si < (ptrdiff_t)fv->font_code_count; si++)
     {
@@ -1246,6 +1248,10 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
                     (uint32_t)font_pixel->u8[0] * font_pixel->u8[0] +
                     (uint32_t)font_pixel->u8[1] * font_pixel->u8[1] +
                     (uint32_t)font_pixel->u8[2] * font_pixel->u8[2])) / 441.672955930063709849498817084f;
+                if (font_pixel->u32 != 0xff000000 && font_pixel->u32 != 0xffffffff)
+                {
+                    fv->font_is_blackwhite = 0;
+                }
                 font_lum -= 0.5f;
                 lum_row[x] = font_lum;
                 lum += font_lum * font_lum;
@@ -1346,8 +1352,8 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
         {
             int x, y;
             uint32_t avr_r = 0, avr_g = 0, avr_b = 0;
-            size_t cur_code_index = 0;
-            size_t best_code_index = 0;
+            uint32_t cur_code_index = 0;
+            uint32_t best_code_index = 0;
             float src_normalize = 0;
             float best_score = -9999999.0f;
             int bright = 0;
@@ -1421,7 +1427,8 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             }
 
             // The best matching char code
-            row[fx] = fv->font_codes[best_code_index];
+            // row[fx] = fv->font_codes[best_code_index];
+            row[fx] = best_code_index;
 
             // Get the average color of the char
             for (y = 0; y < (int)fv->font_h; y++)
@@ -1491,7 +1498,6 @@ static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
     GLuint match_texture = gld->match_texture;
     GLuint final_texture = gld->final_texture;
     GLuint final_texture_c = gld->final_texture_c;
-    int x, y;
 
     glctx_MakeCurrent(fv->opengl_context);
 
@@ -1571,6 +1577,7 @@ static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
         fprintf(fv->log_fp, "Finished GPU rendering a frame. (%d)\n", get_thread_id());
     }
 
+    /*
     for (y = 0; y < (int)f->h; y++)
     {
         uint32_t *row = f->row[y];
@@ -1579,7 +1586,7 @@ static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
             row[x] = fv->font_codes[row[x]];
         }
         row[x] = '\n';
-    }
+    }*/
 }
 #endif
 
@@ -1813,7 +1820,7 @@ static fontvideo_frame_p get_frame_and_render(fontvideo_p fv)
             // If the frame isn't being rendered, first detect if it's too late to render it, then do frame skipping.
             if (!fv->no_frameskip && fv->real_time_play && fv->prepared && lagged_time >= 1.0 && last_output_to_now >= 0.5)
             {
-                fprintf(fv->log_fp, "Discarding frame to render due to lag (%lf seconds). (%d)\n", lagged_time, get_thread_id());
+                fprintf(fv->log_fp, "Discarding frame %u to render due to lag (%lf seconds). (%d)\n", f->index, lagged_time, get_thread_id());
                 
                 // Too late to render the frame, skip it.
                 fontvideo_frame_p next = f->next;
@@ -1868,6 +1875,236 @@ static fontvideo_frame_p get_frame_and_render(fontvideo_p fv)
     return f;
 }
 
+static int create_rendered_image(fontvideo_p fv, fontvideo_frame_p rendered_frame, void ** out_file_content_buffer, size_t *out_file_content_size)
+{
+    void *buffer = NULL;
+    size_t buf_size = 0;
+    size_t pitch;
+    uint32_t cx, cy, bw, bh;
+    uint8_t *bmp;
+    UniformBitmap_p fm = fv->font_matrix;
+
+    bw = fv->font_w * rendered_frame->w;
+    bh = fv->font_h * rendered_frame->h;
+
+    if (fv->font_is_blackwhite)
+    {
+#pragma pack(push, 1)
+        struct Bmp4BitPerPixelHeader
+        {
+            uint16_t    bfType;
+            uint32_t    bfSize;
+            uint16_t    bfReserved1;
+            uint16_t    bfReserved2;
+            uint32_t    bfOffBits;
+            uint32_t    biSize;
+            int32_t     biWidth;
+            int32_t     biHeight;
+            uint16_t    biPlanes;
+            uint16_t    biBitCount;
+            uint32_t    biCompression;
+            uint32_t    biSizeImage;
+            int32_t     biXPelsPerMeter;
+            int32_t     biYPelsPerMeter;
+            uint32_t    biClrUsed;
+            uint32_t    biClrImportant;
+            uint32_t    Palette[16];
+        } *header;
+#pragma pack(pop)
+
+        pitch = (((size_t)bw * 4 - 1) / 32 + 1) * 4;
+        buf_size = sizeof header[0] + pitch * bh;
+        buffer = malloc(buf_size);
+        if (!buffer)
+        {
+            fprintf(fv->log_fp, "Could not allocate memory (%zu bytes) for images to be output: %s\n", buf_size, strerror(errno));
+            goto FailExit;
+        }
+        memset(buffer, 0, buf_size);
+
+        header = buffer;
+        header->bfType = 0x4d42;
+        header->bfSize = (uint32_t)buf_size;
+        header->bfReserved1 = 0;
+        header->bfReserved2 = 0;
+        header->bfOffBits = sizeof header[0];
+        header->biSize = 40;
+        header->biWidth = bw;
+        header->biHeight = bh;
+        header->biPlanes = 1;
+        header->biBitCount = 4;
+        header->biCompression = 0;
+        header->biSizeImage = (uint32_t)(pitch * bh);
+        header->biXPelsPerMeter = 0;
+        header->biYPelsPerMeter = 0;
+        header->biClrUsed = 16;
+        header->biClrImportant = 0;
+        header->Palette[000] = 0x000000;
+        header->Palette[001] = 0x7F0000;
+        header->Palette[002] = 0x007F00;
+        header->Palette[003] = 0x7F7F00;
+        header->Palette[004] = 0x00007F;
+        header->Palette[005] = 0x7F007F;
+        header->Palette[006] = 0x007F7F;
+        header->Palette[007] = 0x7F7F7F;
+        header->Palette[010] = 0x3F3F3F;
+        header->Palette[011] = 0xFF0000;
+        header->Palette[012] = 0x00FF00;
+        header->Palette[013] = 0xFFFF00;
+        header->Palette[014] = 0x0000FF;
+        header->Palette[015] = 0xFF00FF;
+        header->Palette[016] = 0x00FFFF;
+        header->Palette[017] = 0xFFFFFF;
+
+        bmp = (void *)&header[1];
+        for (cy = 0; cy < rendered_frame->h; cy++)
+        {
+            uint32_t *con_row = rendered_frame->row[cy];
+            uint8_t *col_row = rendered_frame->c_row[cy];
+            uint32_t dy = cy * fv->font_h;
+            for (cx = 0; cx < rendered_frame->w; cx++)
+            {
+                uint32_t code = con_row[cx];
+                uint8_t color = col_row[cx];
+                int font_x = (int)((code % fv->font_mat_w) * fv->font_w);
+                int font_y = (int)((code / fv->font_mat_w) * fv->font_h);
+                uint32_t dx = cx * fv->font_w;
+                uint32_t x, y;
+                for (y = 0; y < fv->font_h; y++)
+                {
+                    uint32_t *src_row = fm->RowPointers[fm->Height - 1 - (font_y + y)];
+                    uint8_t *dst_row = &bmp[(size_t)(bh - 1 - (dy + y)) * pitch];
+                    for (x = 0; x < fv->font_w; x+=2)
+                    {
+                        size_t index = (size_t)(dx + x) >> 1;
+                        dst_row[index] = 0;
+                        if (src_row[font_x + x + 0] > 0xff7f7f7f) dst_row[index] |= color << 4;
+                        if (src_row[font_x + x + 1] > 0xff7f7f7f) dst_row[index] |= color;
+                    }
+                }
+            }
+        }
+    }
+    else
+    {
+#pragma pack(push, 1)
+        struct Bmp24BitPerPixelHeader
+        {
+            uint16_t    bfType;
+            uint32_t    bfSize;
+            uint16_t    bfReserved1;
+            uint16_t    bfReserved2;
+            uint32_t    bfOffBits;
+            uint32_t    biSize;
+            int32_t     biWidth;
+            int32_t     biHeight;
+            uint16_t    biPlanes;
+            uint16_t    biBitCount;
+            uint32_t    biCompression;
+            uint32_t    biSizeImage;
+            int32_t     biXPelsPerMeter;
+            int32_t     biYPelsPerMeter;
+            uint32_t    biClrUsed;
+            uint32_t    biClrImportant;
+        } *header;
+        union pixel
+        {
+            uint32_t u32;
+            uint8_t u8[4];
+        } Palette[16] =
+        {
+            {0x000000},
+            {0x00007F},
+            {0x007F00},
+            {0x007F7F},
+            {0x7F0000},
+            {0x7F007F},
+            {0x7F7F00},
+            {0x7F7F7F},
+            {0x3F3F3F},
+            {0x0000FF},
+            {0x00FF00},
+            {0x00FFFF},
+            {0xFF0000},
+            {0xFF00FF},
+            {0xFFFF00},
+            {0xFFFFFF}
+        };
+#pragma pack(pop)
+
+        pitch = (((size_t)bw * 24 - 1) / 32 + 1) * 4;
+        buf_size = sizeof header[0] + pitch * bh;
+        buffer = malloc(buf_size);
+        if (!buffer)
+        {
+            fprintf(fv->log_fp, "Could not allocate memory (%zu bytes) for images to be output: %s\n", buf_size, strerror(errno));
+            goto FailExit;
+        }
+        memset(buffer, 0, buf_size);
+
+        header = buffer;
+        header->bfType = 0x4d42;
+        header->bfSize = (uint32_t)buf_size;
+        header->bfReserved1 = 0;
+        header->bfReserved2 = 0;
+        header->bfOffBits = sizeof header[0];
+        header->biSize = 40;
+        header->biWidth = bw;
+        header->biHeight = bh;
+        header->biPlanes = 1;
+        header->biBitCount = 24;
+        header->biCompression = 0;
+        header->biSizeImage = (uint32_t)(pitch * bh);
+        header->biXPelsPerMeter = 0;
+        header->biYPelsPerMeter = 0;
+        header->biClrUsed = 0;
+        header->biClrImportant = 0;
+
+        bmp = (void *)&header[1];
+        for (cy = 0; cy < rendered_frame->h; cy++)
+        {
+            uint32_t *con_row = rendered_frame->row[cy];
+            uint8_t *col_row = rendered_frame->c_row[cy];
+            uint32_t dy = cy * fv->font_h;
+            for (cx = 0; cx < rendered_frame->w; cx++)
+            {
+                uint32_t code = con_row[cx];
+                uint8_t color = col_row[cx];
+                int font_x = (int)((code % fv->font_mat_w) * fv->font_w);
+                int font_y = (int)((code / fv->font_mat_w) * fv->font_h);
+                uint32_t dx = cx * fv->font_w;
+                uint32_t x, y;
+                for (y = 0; y < fv->font_h; y++)
+                {
+                    uint32_t *src_row = fm->RowPointers[fm->Height - 1 - (font_y + y)];
+                    uint8_t *dst_row = &bmp[(size_t)(bh - 1 - (dy + y)) * pitch];
+                    for (x = 0; x < fv->font_w; x ++)
+                    {
+                        size_t index = (size_t)(dx + x) * 3;
+                        union pixel
+                        {
+                            uint8_t u8[4];
+                            uint32_t u32;
+                        }*src_pixel = (void *)&src_row[font_x + x];
+                        dst_row[index + 0] = (uint8_t)((uint32_t)src_pixel->u8[0] * Palette[color].u8[2] / 255);
+                        dst_row[index + 1] = (uint8_t)((uint32_t)src_pixel->u8[1] * Palette[color].u8[1] / 255);
+                        dst_row[index + 2] = (uint8_t)((uint32_t)src_pixel->u8[2] * Palette[color].u8[0] / 255);
+                    }
+                }
+            }
+        }
+    }
+
+    *out_file_content_buffer = buffer;
+    *out_file_content_size = buf_size;
+    return 1;
+FailExit:
+    free(buffer);
+    if (out_file_content_buffer) *out_file_content_buffer = NULL;
+    if (out_file_content_size) *out_file_content_size = 0;
+    return 0;
+}
+
 static int output_rendered_video(fontvideo_p fv, double timestamp)
 {
     fontvideo_frame_p cur = NULL, next = NULL, prev = NULL;
@@ -1910,7 +2147,7 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                     {
                         if (fv->verbose)
                         {
-                            fprintf(fv->log_fp, "Discarding rendered frame due to lag. (%d)\n", get_thread_id());
+                            fprintf(fv->log_fp, "Discarding rendered frame %u due to lag. (%d)\n", cur->index, get_thread_id());
                         }
                     
                         if (fv->frames == cur)
@@ -1935,7 +2172,7 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                     // Acquire it to prevent it from being rendered
                     if (atomic_compare_exchange_strong(&cur->rendering, &expected, get_thread_id()))
                     {
-                        fprintf(fv->log_fp, "Discarding frame to render due to lag. (%d)\n", get_thread_id());
+                        fprintf(fv->log_fp, "Discarding frame %u to render due to lag. (%d)\n", cur->index, get_thread_id());
                         
                         if (fv->frames == cur)
                         {
@@ -1965,102 +2202,138 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
             }
         }
     }
-    unlock_frame(fv);
     if (timestamp < 0 || timestamp >= cur->timestamp || !fv->real_time_play)
     {
-        next = cur->next;
         int x, y;
+        next = cur->next;
+        unlock_frame(fv);
 #if !defined(_DEBUG)
-        if (1)
-        {
-            set_cursor_xy(0, 0);
-        }
+        set_cursor_xy(0, 0);
 #endif
-        if (!cur->rendered) goto FailExit;
-        if (fv->do_colored_output)
+        if (!cur->rendered)
         {
-            int done_output = 0;
-#ifdef _WIN32
-            if (fv->do_old_console_output)
+            unlock_frame(fv);
+            goto FailExit;
+        }
+#pragma omp parallel sections
+        {
+#pragma omp section
+            if (fv->do_colored_output)
             {
-                if (!fv->old_console_buffer)
+                int done_output = 0;
+#ifdef _WIN32
+                if (fv->do_old_console_output)
                 {
-                    fv->old_console_buffer = calloc((size_t)fv->output_w * fv->output_h, sizeof (CHAR_INFO));
                     if (!fv->old_console_buffer)
                     {
-                        fv->do_old_console_output = 0;
-                        done_output = 0;
+                        fv->old_console_buffer = calloc((size_t)fv->output_w * fv->output_h, sizeof(CHAR_INFO));
+                        if (!fv->old_console_buffer)
+                        {
+                            fv->do_old_console_output = 0;
+                            done_output = 0;
+                        }
+                    }
+                    if (fv->old_console_buffer)
+                    {
+                        CHAR_INFO *ci = fv->old_console_buffer;
+                        COORD BufferSize = {(SHORT)fv->output_w, (SHORT)fv->output_h};
+                        COORD BufferCoord = {0, 0};
+                        SMALL_RECT sr = {0, 0, (SHORT)fv->output_w - 1, (SHORT)fv->output_h - 1};
+                        for (y = 0; y < (int)cur->h && y < (int)fv->output_h; y++)
+                        {
+                            CHAR_INFO *dst_row = &ci[y * fv->output_w];
+                            uint32_t *row = cur->row[y];
+                            uint8_t *c_row = cur->c_row[y];
+                            for (x = 0; x < (int)cur->w && x < (int)fv->output_w; x++)
+                            {
+                                uint32_t Char = fv->font_codes[row[x]];
+                                uint8_t Color = c_row[x];
+                                WORD Attr =
+                                    (Color & 0x01 ? FOREGROUND_RED : 0) |
+                                    (Color & 0x02 ? FOREGROUND_GREEN : 0) |
+                                    (Color & 0x04 ? FOREGROUND_BLUE : 0) |
+                                    (Color & 0x08 ? FOREGROUND_INTENSITY : 0);
+                                if (!Attr) Attr = FOREGROUND_INTENSITY;
+                                dst_row[x].Attributes = Attr;
+                                dst_row[x].Char.UnicodeChar = (WCHAR)Char;
+                            }
+                        }
+                        done_output = WriteConsoleOutputW(GetStdHandle(STD_OUTPUT_HANDLE), ci, BufferSize, BufferCoord, &sr);
                     }
                 }
-                if (fv->old_console_buffer)
+#endif
+                if (!done_output)
                 {
-                    CHAR_INFO *ci = fv->old_console_buffer;
-                    COORD BufferSize = {(SHORT)fv->output_w, (SHORT)fv->output_h};
-                    COORD BufferCoord = {0, 0};
-                    SMALL_RECT sr = {0, 0, (SHORT)fv->output_w - 1, (SHORT)fv->output_h - 1};
-                    for (y = 0; y < (int)cur->h && y < (int)fv->output_h; y++)
+                    char *u8chr = fv->utf8buf;
+                    cur_color = cur->c_row[0][0];
+                    memset(fv->utf8buf, 0, fv->utf8buf_size);
+                    set_console_color(fv, cur_color);
+                    u8chr = strchr(u8chr, 0);
+                    for (y = 0; y < (int)cur->h; y++)
                     {
-                        CHAR_INFO *dst_row = &ci[y * fv->output_w];
                         uint32_t *row = cur->row[y];
                         uint8_t *c_row = cur->c_row[y];
-                        for (x = 0; x < (int)cur->w && x < (int)fv->output_w; x++)
+                        for (x = 0; x < (int)cur->w; x++)
                         {
-                            uint32_t Char = row[x];
-                            uint8_t Color = c_row[x];
-                            WORD Attr =
-                                (Color & 0x01 ? FOREGROUND_RED : 0) |
-                                (Color & 0x02 ? FOREGROUND_GREEN : 0) |
-                                (Color & 0x04 ? FOREGROUND_BLUE : 0) |
-                                (Color & 0x08 ? FOREGROUND_INTENSITY : 0);
-                            if (!Attr) Attr = FOREGROUND_INTENSITY;
-                            dst_row[x].Attributes = Attr;
-                            dst_row[x].Char.UnicodeChar = (WCHAR)Char;
+                            int new_color = c_row[x];
+                            uint32_t char_code = fv->font_codes[row[x]];
+                            if (new_color != cur_color && char_code != ' ')
+                            {
+                                cur_color = new_color;
+                                *u8chr = '\0';
+                                set_console_color(fv, new_color);
+                                u8chr = strchr(u8chr, 0);
+                            }
+                            u32toutf8(&u8chr, char_code);
                         }
                     }
-                    done_output = WriteConsoleOutputW(GetStdHandle(STD_OUTPUT_HANDLE), ci, BufferSize, BufferCoord, &sr);
+                    *u8chr = '\0';
+                    fputs(fv->utf8buf, fv->graphics_out_fp);
+                    done_output = 1;
                 }
             }
-#endif
-            if (!done_output)
+            else
             {
-                char *u8chr = fv->utf8buf;
-                cur_color = cur->c_row[0][0];
-                memset(fv->utf8buf, 0, fv->utf8buf_size);
-                set_console_color(fv, cur_color);
-                u8chr = strchr(u8chr, 0);
                 for (y = 0; y < (int)cur->h; y++)
                 {
+                    char *u8chr = fv->utf8buf;
                     uint32_t *row = cur->row[y];
-                    uint8_t *c_row = cur->c_row[y];
                     for (x = 0; x < (int)cur->w; x++)
                     {
-                        int new_color = c_row[x];
-                        if (new_color != cur_color && row[x] != ' ')
-                        {
-                            cur_color = new_color;
-                            *u8chr = '\0';
-                            set_console_color(fv, new_color);
-                            u8chr = strchr(u8chr, 0);
-                        }
-                        u32toutf8(&u8chr, row[x]);
+                        u32toutf8(&u8chr, fv->font_codes[row[x]]);
+                    }
+                    *u8chr = '\0';
+                    fputs(fv->utf8buf, fv->graphics_out_fp);
+                }
+            }
+
+#pragma omp section
+            while (fv->output_frame_images_prefix)
+            {
+                char buf[4096];
+                FILE *fp = NULL;
+                void *bmp_buf = NULL;
+                size_t bmp_len = 0;
+
+                snprintf(buf, sizeof buf, "%s%08u.bmp", fv->output_frame_images_prefix, cur->index);
+                fp = fopen(buf, "wb");
+                if (!fp)
+                {
+                    fprintf(fv->log_fp, "Could not open '%s' for writting the current frame %u: %s.\n", buf, cur->index, strerror(errno));
+                    break;
+                }
+
+                if (create_rendered_image(fv, cur, &bmp_buf, &bmp_len))
+                {
+                    if (!fwrite(bmp_buf, bmp_len, 1, fp))
+                    {
+                        fprintf(fv->log_fp, "Could not write current frame %u to '%s': %s.\n", cur->index, buf, strerror(errno));
                     }
                 }
-                *u8chr = '\0';
-                fputs(fv->utf8buf, fv->graphics_out_fp);
-                done_output = 1;
-            }
-        }
-        else
-        {
-            for (y = 0; y < (int)cur->h; y++)
-            {
-                char *u8chr = fv->utf8buf;
-                for (x = 0; x < (int)cur->w; x++)
-                {
-                    u32toutf8(&u8chr, cur->row[y][x]);
-                }
-                *u8chr = '\0';
-                fputs(fv->utf8buf, fv->graphics_out_fp);
+
+                free(bmp_buf);
+                fclose(fp);
+                break;
             }
         }
 
@@ -2075,8 +2348,8 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
         fv->precached_frame_count--;
         fv->rendered_frame_count--;
         fv->last_output_time = timestamp;
-        unlock_frame(fv);
     }
+    unlock_frame(fv);
     atomic_exchange(&fv->doing_output, 0);
     return 1;
 FailExit:

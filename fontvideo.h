@@ -73,6 +73,7 @@ typedef struct fontvideo_struct
     uint32_t font_mat_h;
     size_t font_code_count;
     uint32_t *font_codes;
+    int font_is_blackwhite;
 
     int prepared;
 
@@ -99,6 +100,8 @@ typedef struct fontvideo_struct
     int do_old_console_output;
     void *old_console_buffer;
 #endif
+
+    char *output_frame_images_prefix;
 
     atomic_int doing_decoding;
     atomic_int doing_output;
