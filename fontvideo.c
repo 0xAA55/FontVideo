@@ -283,6 +283,11 @@ static void glctx_UnMakeCurrent(glctx_p ctx)
     glfwPollEvents();
 }
 
+static int glctx_IsAvailableNow(glctx_p ctx)
+{
+    return !ctx->lock;
+}
+
 typedef struct opengl_data_struct
 {
     GLuint PBO_src;
@@ -1588,6 +1593,12 @@ static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
         row[x] = '\n';
     }*/
 }
+
+static void do_gpu_or_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
+{
+    if (glctx_IsAvailableNow(fv->opengl_context)) do_gpu_render(fv, f);
+    else do_cpu_render(fv, f);
+}
 #endif
 
 // Render the frame from bitmap into font char codes. One of the magic happens here.
@@ -1601,7 +1612,12 @@ static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
     unlock_frame(fv);
 
 #ifdef FONTVIDEO_ALLOW_OPENGL
-    if (fv->allow_opengl && fv->opengl_context && fv->opengl_data) do_gpu_render(fv, f); else
+    if (fv->allow_opengl && fv->opengl_context && fv->opengl_data)
+    {
+        if (fv->real_time_play) do_gpu_render(fv, f);
+        else do_gpu_or_cpu_render(fv, f);
+    }
+    else
 #endif
     do_cpu_render(fv, f);
 
@@ -2587,9 +2603,8 @@ int fv_render(fontvideo_p fv)
 #endif
 
     if (!fv) return 0;
-    // if (!fv->real_time_play) run_mt = 0;
 
-    if (run_mt && fv->allow_opengl && fv->opengl_context && fv->opengl_data)
+    if (run_mt && fv->allow_opengl && fv->opengl_context && fv->opengl_data && !fv->real_time_play)
     {
 #pragma omp parallel sections
         {
