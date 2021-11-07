@@ -13,6 +13,7 @@ fontvideo
 *.idb
 *.log
 .vs
+out
 msvc/.vs/
 */intermediate/
 */out
