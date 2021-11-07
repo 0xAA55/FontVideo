@@ -8,21 +8,24 @@ Default is output to `stdout`, but you can specify its output to a file.
 
 ## Usage:
 
-	FontVideo.exe -i <input> [-o output.txt] [-v] [-p seconds] [-m] [-w width] [-h height] [-s width height] [-S from_sec] [-b] [--no-opengl] [--assets-meta metafile.ini]
+	Usage: FontVideo.exe -i <input> [-o <output.txt>] [-v] [-p <seconds>] [-m] [-w <width>] [-h <height>] [-s <width> <height>] [-S <from_sec>] [-b] [--invert-color] [--no-opengl] [--no-frameskip] [--assets-meta <metafile.ini>] [--output-frame-image-sequence <prefix>]
 	Or: FontVideo.exe <input>
-        -i: Specify the input video file name.
-        -o: [Optional] Specify the output text file name.
-        -v: Verbose mode, output debug informations.
-        -p: [Optional] Specify pre-render seconds, Longer value results longer delay but better quality.
-        -m: Mute sound output.
-        -w: [Optional] Width of the output.
-        -h: [Optional] Height of the output.
-        -s: [Optional] Size of the output, default is to detect the size of the console window, or 80x25 if failed.
-        -b: Only do white-black output.
-        -S: [Optional] Set the playback start time of seconds.
-        --no-opengl: [Optional] Do not use OpenGL to accelerate rendering.
-        --assets-meta: [Optional] Use specified meta file, default is to use 'assets\meta.ini'.
-        --log: [Optional] Specify the log file.
+		-i: Specify the input video file name.
+		-o: [Optional] Specify the output text file name.
+		-v: Verbose mode, output debug informations.
+		-p: [Optional] Specify pre-render seconds, Longer value results longer delay but better quality.
+		-m: Mute sound output.
+		-w: [Optional] Width of the output.
+		-h: [Optional] Height of the output.
+		-s: [Optional] Size of the output, default is to detect the size of the console window, or 80x25 if failed.
+		-b: Only do white-black output.
+		-S: [Optional] Set the playback start time of seconds.
+		--log: [Optional] Specify the log file.
+		--invert-color: [Optional] Do color invert.
+		--no-opengl: [Optional] Do not use OpenGL to accelerate rendering.
+		--no-frameskip: [Optional] Do not skip frames, which may cause video and audio could not sync.
+		--assets-meta: [Optional] Use specified meta file, default is to use 'assets\meta.ini'.
+		--output-frame-image-sequence: [Optional] Output each frame image to a directory. The format of the image is `bmp`.
 
 ## Demo
 
