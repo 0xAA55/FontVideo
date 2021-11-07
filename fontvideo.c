@@ -2204,11 +2204,14 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
     }
     if (timestamp < 0 || timestamp >= cur->timestamp || !fv->real_time_play)
     {
-        int x, y;
+        uint32_t x, y;
         next = cur->next;
         unlock_frame(fv);
 #if !defined(_DEBUG)
-        set_cursor_xy(0, 0);
+        if (fv->real_time_play)
+        {
+            set_cursor_xy(0, 0);
+        }
 #endif
         if (!cur->rendered)
         {
@@ -2239,12 +2242,12 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                         COORD BufferSize = {(SHORT)fv->output_w, (SHORT)fv->output_h};
                         COORD BufferCoord = {0, 0};
                         SMALL_RECT sr = {0, 0, (SHORT)fv->output_w - 1, (SHORT)fv->output_h - 1};
-                        for (y = 0; y < (int)cur->h && y < (int)fv->output_h; y++)
+                        for (y = 0; y < cur->h && y < fv->output_h; y++)
                         {
                             CHAR_INFO *dst_row = &ci[y * fv->output_w];
                             uint32_t *row = cur->row[y];
                             uint8_t *c_row = cur->c_row[y];
-                            for (x = 0; x < (int)cur->w && x < (int)fv->output_w; x++)
+                            for (x = 0; x < cur->w && x < fv->output_w; x++)
                             {
                                 uint32_t Char = fv->font_codes[row[x]];
                                 uint8_t Color = c_row[x];
@@ -2269,11 +2272,11 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                     memset(fv->utf8buf, 0, fv->utf8buf_size);
                     set_console_color(fv, cur_color);
                     u8chr = strchr(u8chr, 0);
-                    for (y = 0; y < (int)cur->h; y++)
+                    for (y = 0; y < cur->h; y++)
                     {
                         uint32_t *row = cur->row[y];
                         uint8_t *c_row = cur->c_row[y];
-                        for (x = 0; x < (int)cur->w; x++)
+                        for (x = 0; x < cur->w; x++)
                         {
                             int new_color = c_row[x];
                             uint32_t char_code = fv->font_codes[row[x]];
