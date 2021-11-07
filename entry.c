@@ -13,7 +13,7 @@
 
 void usage(char *argv0)
 {
-    fprintf(stderr, "Usage: %s -i <input> [-o output.txt] [-v] [-p seconds] [-m] [-w width] [-h height] [-s width height] [-S from_sec] [-b] [--invert-color] [--no-opengl] [--no-frameskip] [--assets-meta metafile.ini]\n"
+    fprintf(stderr, "Usage: %s -i <input> [-o <output.txt>] [-v] [-p <seconds>] [-m] [-w <width>] [-h <height>] [-s <width> <height>] [-S <from_sec>] [-b] [--invert-color] [--no-opengl] [--no-frameskip] [--assets-meta <metafile.ini>] [--output-frame-image-sequence <prefix>]\n"
         "Or: %s <input>\n"
         "\t-i: Specify the input video file name.\n"
         "\t-o: [Optional] Specify the output text file name.\n"
@@ -30,6 +30,7 @@ void usage(char *argv0)
         "\t--no-opengl: [Optional] Do not use OpenGL to accelerate rendering.\n"
         "\t--no-frameskip: [Optional] Do not skip frames, which may cause video and audio could not sync.\n"
         "\t--assets-meta: [Optional] Use specified meta file, default is to use 'assets"SUBDIR"meta.ini'.\n"
+        "\t--output-frame-image-sequence: [Optional] Output each frame image to a directory. The format of the image is `bmp`.\n"
         "", argv0, argv0);
 }
 
@@ -51,6 +52,7 @@ int main(int argc, char **argv)
     int no_opengl = 0;
     int no_frameskip = 0;
     char *assets_meta = "assets"SUBDIR"meta.ini";
+    char *output_frame_images_prefix = NULL;
     FILE *fp_log = stderr;
 
 #ifdef _WIN32
@@ -172,6 +174,11 @@ int main(int argc, char **argv)
                 if (++i >= argc) goto BadUsageExit;
                 assets_meta = argv[i++];
             }
+            else if (!strcmp(argv[i], "--output-frame-image-sequence"))
+            {
+                if (++i >= argc) goto BadUsageExit;
+                output_frame_images_prefix = argv[i++];
+            }
             else if (!strcmp(argv[i], "--log"))
             {
                 char *log_file;
@@ -219,11 +226,10 @@ int main(int argc, char **argv)
     if (!no_opengl) fv_allow_opengl(fv);
     if (no_frameskip) fv->no_frameskip = 1;
     if (do_color_invert) fv->do_color_invert = 1;
+    if (output_frame_images_prefix) fv->output_frame_images_prefix = output_frame_images_prefix;
 
-    if (real_time_show)
-        fv_show(fv);
-    else
-        fv_render(fv);
+    if (real_time_show) fv_show(fv);
+    else fv_render(fv);
 
     fv_destroy(fv);
     if (fp_out != stdout && fp_out != NULL) fclose(fp_out);
