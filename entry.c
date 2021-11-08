@@ -19,6 +19,8 @@ void usage(char *argv0)
         "\t-o: [Optional] Specify the output text file name.\n"
         "\t-v: [Optional] Verbose mode, output debug informations.\n"
         "\t  Alias: --verbose\n"
+        "\t-vt: [Optional] Verbose mode for multithreading, output lock acquirement informations.\n"
+        "\t  Alias: --verbose-threading\n"
         "\t-p: [Optional] Specify pre-render seconds, Longer value results longer delay but better quality.\n"
         "\t  Alias: --pre-render\n"
         "\t-m: [Optional] Mute sound output.\n"
@@ -50,6 +52,7 @@ int main(int argc, char **argv)
     int i;
     int real_time_show = 1;
     int verbose = 0;
+    int verbose_threading = 0;
     int mute = 0;
     double prerender_secs = 5.0;
     double start_sec = -1.0;
@@ -125,6 +128,11 @@ int main(int argc, char **argv)
             {
                 i++;
                 verbose = 1;
+            }
+            else if (!strcmp(argv[i], "-vt") || !strcmp(argv[i], "--verbose-threading"))
+            {
+                i++;
+                verbose_threading = 1;
             }
             else if (!strcmp(argv[i], "-p") || !strcmp(argv[i], "--pre-render"))
             {
@@ -228,7 +236,20 @@ int main(int argc, char **argv)
 
     if (!fp_out) fp_out = stdout;
 
-    fv = fv_create(input_file, fp_log, verbose, fp_out, assets_meta, output_width, output_height, prerender_secs, !mute, start_sec);
+    fv = fv_create
+    (
+        input_file,
+        fp_log,
+        verbose,
+        verbose_threading,
+        fp_out,
+        assets_meta,
+        output_width,
+        output_height,
+        prerender_secs,
+        !mute,
+        start_sec
+    );
     if (!fv) goto FailExit;
 
     if (no_colors) fv->do_colored_output = 0;

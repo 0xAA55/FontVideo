@@ -221,6 +221,17 @@ typedef struct opengl_data_struct
     int match_height;
     GLuint match_shader;
 
+    GLuint FBO_reduction;
+    GLuint reduction_texture_src;
+    GLuint reduction_texture_dst;
+    int reduction_max_width;
+    int reduction_max_height;
+    int reduction_cur_width;
+    int reduction_cur_height;
+    int reduction_next_width;
+    int reduction_next_height;
+    GLuint reduction_shader;
+
     GLuint FBO_final;
     GLuint PBO_final;
     GLuint PBO_final_c;
@@ -304,64 +315,6 @@ FailExit:
     return 0;
 }
 
-static void set_match_shader_uniforms(fontvideo_p fv, opengl_data_p gld)
-{
-    int Location;
-
-    Location = glGetUniformLocation(gld->match_shader, "Resolution"); // assert(Location >= 0);
-    glUniform2i(Location, gld->match_width, gld->match_height);
-
-    Location = glGetUniformLocation(gld->match_shader, "FontMatrix"); // assert(Location >= 0);
-    glUniform1i(Location, 0);
-
-    Location = glGetUniformLocation(gld->match_shader, "FontMatrixCodeCount"); // assert(Location >= 0);
-    glUniform1i(Location, (GLint)fv->font_code_count);
-
-    Location = glGetUniformLocation(gld->match_shader, "FontMatrixSize"); // assert(Location >= 0);
-    glUniform2i(Location, fv->font_mat_w, fv->font_mat_h);
-
-    Location = glGetUniformLocation(gld->match_shader, "GlyphSize"); // assert(Location >= 0);
-    glUniform2i(Location, fv->font_w, fv->font_h);
-
-    Location = glGetUniformLocation(gld->match_shader, "ConsoleSize"); // assert(Location >= 0);
-    glUniform2i(Location, fv->output_w, fv->output_h);
-
-    Location = glGetUniformLocation(gld->match_shader, "SrcColor"); // assert(Location >= 0);
-    glUniform1i(Location, 1);
-
-    Location = glGetUniformLocation(gld->match_shader, "SrcInvert"); // assert(Location >= 0);
-    glUniform1i(Location, fv->do_color_invert);
-}
-
-static void set_final_shader_uniforms(fontvideo_p fv, opengl_data_p gld)
-{
-    int Location;
-
-    Location = glGetUniformLocation(gld->final_shader, "Resolution"); // assert(Location >= 0);
-    glUniform2i(Location, gld->final_width, gld->final_height);
-
-    Location = glGetUniformLocation(gld->final_shader, "MatchTexSize"); // assert(Location >= 0);
-    glUniform2i(Location, gld->match_width, gld->match_height);
-
-    Location = glGetUniformLocation(gld->final_shader, "MatchTex"); // assert(Location >= 0);
-    glUniform1i(Location, 2);
-
-    Location = glGetUniformLocation(gld->final_shader, "FontMatrixCodeCount"); // assert(Location >= 0);
-    glUniform1i(Location, (GLint)fv->font_code_count);
-
-    Location = glGetUniformLocation(gld->final_shader, "GlyphSize"); // assert(Location >= 0);
-    glUniform2i(Location, fv->font_w, fv->font_h);
-
-    Location = glGetUniformLocation(gld->final_shader, "ConsoleSize"); // assert(Location >= 0);
-    glUniform2i(Location, fv->output_w, fv->output_h);
-
-    Location = glGetUniformLocation(gld->final_shader, "SrcColor"); // assert(Location >= 0);
-    glUniform1i(Location, 1);
-
-    Location = glGetUniformLocation(gld->final_shader, "SrcInvert"); // assert(Location >= 0);
-    glUniform1i(Location, fv->do_color_invert);
-}
-
 static void opengl_data_destroy(opengl_data_p gld)
 {
     if (gld)
@@ -379,6 +332,8 @@ static void opengl_data_destroy(opengl_data_p gld)
         {
             gld->src_texture,
             gld->match_texture,
+            gld->reduction_texture_src,
+            gld->reduction_texture_dst,
             gld->final_texture,
             gld->final_texture_c,
             gld->font_matrix_texture
@@ -387,12 +342,14 @@ static void opengl_data_destroy(opengl_data_p gld)
         GLuint FBOsToDelete[] =
         {
             gld->FBO_match,
+            gld->FBO_reduction,
             gld->FBO_final
         };
 
         GLuint ShadersToDelete[] =
         {
             gld->match_shader,
+            gld->reduction_shader,
             gld->final_shader
         };
 
@@ -406,12 +363,11 @@ static void opengl_data_destroy(opengl_data_p gld)
     }
 }
 
-static opengl_data_p opengl_data_create(fontvideo_p fv)
+static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
 {
     opengl_data_p gld = calloc(1, sizeof gld[0]);
     size_t size;
     void *MapPtr;
-    char *VersionStr = NULL;
     GLuint quad_vbo = 0;
     GLuint pbo_font_matrix = 0;
     GLint match_width = 0;
@@ -432,8 +388,11 @@ static opengl_data_p opengl_data_create(fontvideo_p fv)
 
     if (!gld) goto NoMemFailExit;
 
-    VersionStr = (char *)glGetString(GL_VERSION);
-    fprintf(fv->log_fp, "OpenGL version: %s.\n", VersionStr);
+    if (output_init_info)
+    {
+        char *VersionStr = (char *)glGetString(GL_VERSION);
+        fprintf(fv->log_fp, "OpenGL version: %s.\n", VersionStr);
+    }
 
     if (!GLEW_VERSION_3_0)
     {
@@ -442,11 +401,12 @@ static opengl_data_p opengl_data_create(fontvideo_p fv)
     }
 
     glGenFramebuffers(1, &gld->FBO_match);
+    glGenFramebuffers(1, &gld->FBO_reduction);
     glGenFramebuffers(1, &gld->FBO_final);
 
     gld->src_width = fv->output_w * fv->font_w;
     gld->src_height = fv->output_w * fv->font_w;
-    size = gld->src_width * gld->src_height * 4;
+    size = (size_t)gld->src_width * gld->src_height * 4;
 
     glGenTextures(1, &gld->src_texture);
     glBindTexture(GL_TEXTURE_2D, gld->src_texture);
@@ -596,13 +556,57 @@ static opengl_data_p opengl_data_create(fontvideo_p fv)
     );
     if (!gld->match_shader) goto FailExit;
 
-    fprintf(fv->log_fp, "OpenGL Renderer: match size: %d x %d.\n", match_width, match_height);
-    if (1)
+    if (output_init_info)
     {
         int InstCount = InstMatrixWidth * InstMatrixHeight;
         int LoopCount = (int)(fv->font_code_count / InstCount);
+        fprintf(fv->log_fp, "OpenGL Renderer: match size: %d x %d.\n", match_width, match_height);
         fprintf(fv->log_fp, "Expected loop count '%d' for total code count %zu (%d tests run in a pass).\n", LoopCount, fv->font_code_count, InstCount);
     }
+
+    gld->reduction_max_width = match_width;
+    gld->reduction_max_height = match_height;
+
+    glGenTextures(1, &gld->reduction_texture_src);
+    glBindTexture(GL_TEXTURE_2D, gld->reduction_texture_src);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, gld->reduction_max_width, gld->reduction_max_height, 0, GL_RGBA, GL_FLOAT, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    glGenTextures(1, &gld->reduction_texture_dst);
+    glBindTexture(GL_TEXTURE_2D, gld->reduction_texture_dst);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, gld->reduction_max_width, gld->reduction_max_height, 0, GL_RGBA, GL_FLOAT, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    gld->reduction_cur_width = 0;
+    gld->reduction_cur_height = 0;
+    gld->reduction_next_width = 0;
+    gld->reduction_next_height = 0;
+
+    gld->reduction_shader = create_shader_program(fv->log_fp,
+        "#version 130\n"
+        "in vec2 vPosition;"
+        "in vec2 vTexCoord;"
+        "out vec2 TexCoord;"
+        "void main()"
+        "{"
+        "   TexCoord = vTexCoord;"
+        "   gl_Position = vec4(vPosition, 0.0, 1.0);"
+        "}"
+        ,
+        NULL,
+        "#version 130\n"
+        "in vec2 TexCoord;"
+        ""
+    );
+    if (!gld->reduction_shader) goto FailExit;
 
     gld->final_width = fv->output_w;
     gld->final_height = fv->output_h;
@@ -856,7 +860,17 @@ FailExit:
 
 static void glctx_MakeCurrent(glctx_p ctx)
 {
-    while (atomic_exchange(&ctx->lock, 1)) yield();
+    fontvideo_p fv = ctx->fv;
+    atomic_int readout = 0;
+    int cur_id = get_thread_id();
+    while ((readout = atomic_exchange(&ctx->lock, cur_id)) != 0)
+    {
+        if (fv->verbose_threading)
+        {
+            fprintf(fv->log_fp, "OpenGL Context locked by %u.\n", readout);
+        }
+        yield();
+    }
     glfwMakeContextCurrent(ctx->window);
 }
 
@@ -874,14 +888,23 @@ static int glctx_IsAvailableNow(glctx_p ctx)
 
 static int glctx_TryMakeCurrent(glctx_p ctx)
 {
-    atomic_int expected = 0;
+    fontvideo_p fv = ctx->fv;
+    int expected = 0;
+    int cur_id = get_thread_id();
     if (!glctx_IsAvailableNow(ctx)) return 0;
-    if (atomic_compare_exchange_strong(&ctx->lock, &expected, 1))
+    if (atomic_compare_exchange_strong(&ctx->lock, &expected, cur_id))
     {
+        if (fv->verbose_threading)
+        {
+            fprintf(fv->log_fp, "OpenGL Context acquired by %u.\n", cur_id);
+        }
         glfwMakeContextCurrent(ctx->window);
         return 1;
     }
-    else return 0;
+    else
+    {
+        return 0;
+    }
 }
 
 typedef struct opengl_renderer_struct
@@ -930,7 +953,7 @@ static opengl_renderer_p opengl_renderer_create(fontvideo_p fv)
         if (!ctx) goto FailExit;
         r->contexts[i] = ctx;
         glctx_MakeCurrent(ctx);
-        ctx->data = opengl_data_create(fv);
+        ctx->data = opengl_data_create(fv, !i);
         glctx_UnMakeCurrent(ctx);
         if (!ctx->data) goto FailExit;
     }
@@ -972,8 +995,8 @@ static int get_thread_id()
 // For locking the frames link list of `fv->frames` and `fv->frame_last`, not for locking every individual frames
 static void lock_frame(fontvideo_p fv)
 {
-    atomic_int readout = 0;
-    atomic_int cur_id = get_thread_id();
+    int readout = 0;
+    int cur_id = get_thread_id();
     while (
         // First, do a non-atomic test for a quick peek.
         ((readout = fv->frame_lock) != 0) ||
@@ -1620,6 +1643,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
 #ifdef FONTVIDEO_ALLOW_OPENGL
 static void do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_data_p gld)
 {
+    int Location;
     size_t size;
     void *MapPtr;
     GLenum DrawBuffers[2] = {0};
@@ -1659,7 +1683,31 @@ static void do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl
     assert(glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
 
     glUseProgram(gld->match_shader);
-    set_match_shader_uniforms(fv, gld);
+
+    Location = glGetUniformLocation(gld->match_shader, "Resolution"); // assert(Location >= 0);
+    glUniform2i(Location, gld->match_width, gld->match_height);
+
+    Location = glGetUniformLocation(gld->match_shader, "FontMatrix"); // assert(Location >= 0);
+    glUniform1i(Location, 0);
+
+    Location = glGetUniformLocation(gld->match_shader, "FontMatrixCodeCount"); // assert(Location >= 0);
+    glUniform1i(Location, (GLint)fv->font_code_count);
+
+    Location = glGetUniformLocation(gld->match_shader, "FontMatrixSize"); // assert(Location >= 0);
+    glUniform2i(Location, fv->font_mat_w, fv->font_mat_h);
+
+    Location = glGetUniformLocation(gld->match_shader, "GlyphSize"); // assert(Location >= 0);
+    glUniform2i(Location, fv->font_w, fv->font_h);
+
+    Location = glGetUniformLocation(gld->match_shader, "ConsoleSize"); // assert(Location >= 0);
+    glUniform2i(Location, fv->output_w, fv->output_h);
+
+    Location = glGetUniformLocation(gld->match_shader, "SrcColor"); // assert(Location >= 0);
+    glUniform1i(Location, 1);
+
+    Location = glGetUniformLocation(gld->match_shader, "SrcInvert"); // assert(Location >= 0);
+    glUniform1i(Location, fv->do_color_invert);
+
     glBindVertexArray(gld->Quad_VAO);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
@@ -1677,7 +1725,31 @@ static void do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl
     assert(glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
 
     glUseProgram(gld->final_shader);
-    set_final_shader_uniforms(fv, gld);
+
+    Location = glGetUniformLocation(gld->final_shader, "Resolution"); // assert(Location >= 0);
+    glUniform2i(Location, gld->final_width, gld->final_height);
+
+    Location = glGetUniformLocation(gld->final_shader, "MatchTexSize"); // assert(Location >= 0);
+    glUniform2i(Location, gld->match_width, gld->match_height);
+
+    Location = glGetUniformLocation(gld->final_shader, "MatchTex"); // assert(Location >= 0);
+    glUniform1i(Location, 2);
+
+    Location = glGetUniformLocation(gld->final_shader, "FontMatrixCodeCount"); // assert(Location >= 0);
+    glUniform1i(Location, (GLint)fv->font_code_count);
+
+    Location = glGetUniformLocation(gld->final_shader, "GlyphSize"); // assert(Location >= 0);
+    glUniform2i(Location, fv->font_w, fv->font_h);
+
+    Location = glGetUniformLocation(gld->final_shader, "ConsoleSize"); // assert(Location >= 0);
+    glUniform2i(Location, fv->output_w, fv->output_h);
+
+    Location = glGetUniformLocation(gld->final_shader, "SrcColor"); // assert(Location >= 0);
+    glUniform1i(Location, 1);
+
+    Location = glGetUniformLocation(gld->final_shader, "SrcInvert"); // assert(Location >= 0);
+    glUniform1i(Location, fv->do_color_invert);
+
     glBindVertexArray(gld->Quad_VAO);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
@@ -2592,7 +2664,8 @@ fontvideo_p fv_create
 (
     char *input_file,
     FILE *log_fp,
-    int do_verbose_log,
+    int log_verbose,
+    int log_verbose_threading,
     FILE *graphics_out_fp,
     char *assets_meta_file,
     uint32_t x_resolution,
@@ -2609,12 +2682,13 @@ fontvideo_p fv_create
     fv = calloc(1, sizeof fv[0]);
     if (!fv) return fv;
     fv->log_fp = log_fp;
-    fv->verbose = do_verbose_log;
 #ifdef _DEBUG
     fv->verbose = 1;
 #else
     fv->verbose = 0;
 #endif
+    fv->verbose = log_verbose;
+    fv->verbose_threading = log_verbose_threading;
     fv->graphics_out_fp = graphics_out_fp;
     fv->do_audio_output = do_audio_output;
 

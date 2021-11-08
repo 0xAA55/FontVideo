@@ -117,7 +117,8 @@ fontvideo_p fv_create
 (
     char *input_file,
     FILE *log_fp,
-    int do_verbose_log,
+    int log_verbose,
+    int log_verbose_threading,
     FILE *graphics_out_fp,
     char *assets_meta_file,
     uint32_t x_resolution,
