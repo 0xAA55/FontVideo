@@ -1234,6 +1234,7 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
     size_t font_raw_code_size = 0;
     size_t font_count_max = 0;
     uint32_t code;
+    size_t expected_font_code_count = 0;
     size_t font_pixel_count;
 
     // snprintf(buf, sizeof buf, "%s"SUBDIR"%s", assets_dir, meta_file);
@@ -1272,6 +1273,7 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
     // Font matrix dimension
     fv->font_mat_w = fv->font_matrix->Width / fv->font_w;
     fv->font_mat_h = fv->font_matrix->Height / fv->font_h;
+    expected_font_code_count = (size_t)fv->font_mat_w * fv->font_mat_h;
 
     snprintf(buf, sizeof buf, "%s"SUBDIR"%s", assets_dir, font_code_txt);
     fp_code = fopen(buf, "r");
@@ -1331,6 +1333,18 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
 
         fprintf(log_fp, "Actual count of codes read out from code file '%s' is '%zu' rather than '%zu'\n", buf, i, fv->font_code_count);
         fv->font_code_count = i;
+    }
+
+    // Detect if the font matrix size doesn't match
+    if (fv->font_code_count > expected_font_code_count)
+    {
+        fprintf(log_fp, "Font meta-file issue: font bitmap file size of %ux%u"
+            " for glyph size %ux%u"
+            " should have a maximum of %zu"
+            " glyphs, but the given code count %zu"
+            " exceeded the glyph count. Please correct the meta-file and run this program again.\n",
+            fv->font_matrix->Width, fv->font_matrix->Height, fv->font_w, fv->font_h, expected_font_code_count, fv->font_code_count);
+        goto FailExit;
     }
 
     fv->font_luminance_image = malloc(fv->font_code_count * font_pixel_count * sizeof fv->font_luminance_image[0]);
