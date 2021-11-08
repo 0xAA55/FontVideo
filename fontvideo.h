@@ -62,8 +62,7 @@ typedef struct fontvideo_struct
     int allow_opengl;
     int no_frameskip;
     int do_color_invert;
-    void *opengl_context;
-    void *opengl_data;
+    void *opengl_renderer;
 
     char *font_face;
     uint32_t font_w, font_h;
