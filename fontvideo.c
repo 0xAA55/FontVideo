@@ -2751,46 +2751,25 @@ int fv_render(fontvideo_p fv)
 
     if (!fv) return 0;
 
-    if (run_mt && fv->allow_opengl && fv->opengl_renderer && !fv->real_time_play)
+    if (run_mt)
     {
-#pragma omp parallel sections
+#pragma omp parallel
+        for (;;)
         {
-#pragma omp section
-            for (;;)
+            if ((!fv->tailed && !do_decode(fv, 1)) ||
+                (fv->frames && fv->precached_frame_count > fv->rendered_frame_count && !get_frame_and_render(fv)) ||
+                (fv->frames && fv->rendered_frame_count && !output_rendered_video(fv, rttimer_gettime(&fv->tmr))))
             {
-                while (!fv->tailed)
-                {
-                    if (!do_decode(fv, 1)) break;
-                }
+                continue;
+            }
+            else
+            {
                 yield();
-                if (fv->tailed && !fv->frames) break;
             }
-#pragma omp section
-            for (;;)
-            {
-                if (fv->precached_frame_count > fv->rendered_frame_count)
-                {
-                    fontvideo_frame_p f = get_frame_and_render(fv);
-                    if (!f) yield();
-                }
-                if (fv->tailed && !fv->frames) break;
-            }
-#pragma omp section
-            for (;;)
-            {
-                if (fv->rendered_frame_count)
-                {
-                    output_rendered_video(fv, rttimer_gettime(&fv->tmr));
-                }
-                else
-                {
-                    yield();
-                }
-                if (fv->tailed && !fv->frames) break;
-            }
+            if (fv->tailed && !fv->frames) break;
         }
     }
-    else if (!run_mt)
+    else
     {
         for (;;)
         {
@@ -2808,25 +2787,6 @@ int fv_render(fontvideo_p fv)
             }
             if (fv->tailed && !fv->frames) break;
         }
-    }
-    else
-    {
-#pragma omp parallel
-        for (;;)
-        {
-            if ((!fv->tailed && !do_decode(fv, 1)) ||
-                (fv->frames && fv->precached_frame_count > fv->rendered_frame_count && !get_frame_and_render(fv)) ||
-                (fv->frames && fv->rendered_frame_count && !output_rendered_video(fv, rttimer_gettime(&fv->tmr))))
-            {
-                continue;
-            }
-            else
-            {
-                yield();
-            }
-            if (fv->tailed && !fv->frames) break;
-        }
-
     }
 #ifndef FONTVIDEO_NO_SOUND
     while (fv->do_audio_output && (fv->audios || fv->audio_last)) yield();
