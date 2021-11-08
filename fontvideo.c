@@ -612,7 +612,7 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
         "void main()"
         "{"
         "    ivec2 FragCoord = ivec2(TexCoord * vec2(Resolution));"
-        "    ivec2 InstCoord = Resolution / ConsoleSize;"
+        "    ivec2 InstCoord = FragCoord / ConsoleSize;"
         "    ivec2 ConsoleCoord = FragCoord - (InstCoord * ConsoleSize);"
         "    ivec2 SrcInstCoord = InstCoord * ReductionSize;"
         "    float BestScore = -99999.9;"
@@ -1764,7 +1764,7 @@ static void do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl
             {
                 if (!(src_instmat_w % i))
                 {
-                    reduction_x = i - 1;
+                    reduction_x = i;
                     dst_instmat_w = src_instmat_w / i;
                     reduction_dst_width = dst_instmat_w * gld->final_width;
                     break;
@@ -1773,7 +1773,7 @@ static void do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl
         }
         if (!reduction_dst_width)
         {
-            reduction_x = (reduction_src_width - 1) / gld->final_width;
+            reduction_x = (reduction_src_width - 1) / gld->final_width + 1;
             dst_instmat_w = 1;
             reduction_dst_width = dst_instmat_w * gld->final_width;
         }
@@ -1784,7 +1784,7 @@ static void do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl
             {
                 if (!(src_instmat_h % i))
                 {
-                    reduction_y = i - 1;
+                    reduction_y = i;
                     dst_instmat_h = src_instmat_h / i;
                     reduction_dst_height = dst_instmat_h * gld->final_height;
                     break;
@@ -1793,7 +1793,7 @@ static void do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl
         }
         if (!reduction_dst_height)
         {
-            reduction_y = (reduction_src_height - 1) / gld->final_height;
+            reduction_y = (reduction_src_height - 1) / gld->final_height + 1;
             dst_instmat_h = 1;
             reduction_dst_height = dst_instmat_h * gld->final_height;
         }
@@ -1821,17 +1821,17 @@ static void do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl
 
         glUseProgram(gld->reduction_shader);
 
-        Location = glGetUniformLocation(gld->final_shader, "Resolution"); // assert(Location >= 0);
+        Location = glGetUniformLocation(gld->reduction_shader, "Resolution"); // assert(Location >= 0);
         glUniform2i(Location, reduction_dst_width, reduction_dst_height);
 
-        Location = glGetUniformLocation(gld->final_shader, "ConsoleSize"); // assert(Location >= 0);
+        Location = glGetUniformLocation(gld->reduction_shader, "ConsoleSize"); // assert(Location >= 0);
         glUniform2i(Location, fv->output_w, fv->output_h);
 
-        Location = glGetUniformLocation(gld->match_shader, "ReductionTex"); // assert(Location >= 0);
+        Location = glGetUniformLocation(gld->reduction_shader, "ReductionTex"); // assert(Location >= 0);
         glActiveTexture(GL_TEXTURE0 + 1); glBindTexture(GL_TEXTURE_2D, reduction_tex1);
         glUniform1i(Location, 1);
 
-        Location = glGetUniformLocation(gld->final_shader, "ReductionSize"); // assert(Location >= 0);
+        Location = glGetUniformLocation(gld->reduction_shader, "ReductionSize"); // assert(Location >= 0);
         glUniform2i(Location, reduction_x, reduction_y);
 
         glBindVertexArray(gld->Quad_VAO);
