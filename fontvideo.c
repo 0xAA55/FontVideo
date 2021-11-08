@@ -948,8 +948,8 @@ static void opengl_renderer_destroy(opengl_renderer_p r)
 static opengl_renderer_p opengl_renderer_create(fontvideo_p fv)
 {
     opengl_renderer_p r = NULL;
-    size_t ctx_count = omp_get_max_threads();
-    size_t i;
+    int ctx_count = omp_get_max_threads();
+    int i;
     if (!ctx_count) ctx_count = 1;
 
     r = malloc(sizeof r[0]);
@@ -965,9 +965,20 @@ static opengl_renderer_p opengl_renderer_create(fontvideo_p fv)
         glctx_p ctx = glctx_Create(fv);
         if (!ctx) goto FailExit;
         r->contexts[i] = ctx;
+    }
+
+#pragma omp parallel for
+    for (i = 0; i < ctx_count; i++)
+    {
+        glctx_p ctx = r->contexts[i];
         glctx_MakeCurrent(ctx);
         ctx->data = opengl_data_create(fv, !i);
         glctx_UnMakeCurrent(ctx);
+    }
+
+    for (i = 0; i < ctx_count; i++)
+    {
+        glctx_p ctx = r->contexts[i];
         if (!ctx->data) goto FailExit;
     }
 
@@ -1738,7 +1749,7 @@ static void do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl
     reduction_pass = 0;
     while(1)
     {
-        const max_reduction_scale = 32;
+        const int max_reduction_scale = 32;
         int i;
         int src_instmat_w = 0;
         int src_instmat_h = 0;
@@ -2981,8 +2992,9 @@ int fv_render(fontvideo_p fv)
         for (;;)
         {
             if ((!fv->tailed && !do_decode(fv, 1)) ||
+                (fv->frames && fv->rendered_frame_count && !output_rendered_video(fv, rttimer_gettime(&fv->tmr)) ||
                 (fv->frames && fv->precached_frame_count > fv->rendered_frame_count && !get_frame_and_render(fv)) ||
-                (fv->frames && fv->rendered_frame_count && !output_rendered_video(fv, rttimer_gettime(&fv->tmr))))
+                    0))
             {
                 continue;
             }
