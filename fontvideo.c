@@ -208,86 +208,6 @@ static void yield()
 
 static atomic_int GLFWInitialized = 0;
 
-typedef struct glctx_struct
-{
-    fontvideo_p fv;
-    GLFWwindow *window;
-    atomic_int lock;
-}glctx_t, *glctx_p;
-
-static void glfw_error_callback(int error, const char *description)
-{
-    fprintf(stderr, "GLFW Error: (%d) %s\n", error, description);
-}
-
-static void glctx_Destroy(glctx_p ctx)
-{
-    if (ctx)
-    {
-        if (ctx->window) glfwDestroyWindow(ctx->window);
-        free(ctx);
-
-        if (atomic_fetch_sub(&GLFWInitialized, 1) == 1)
-        {
-            glfwTerminate();
-        }
-    }
-}
-
-static glctx_p glctx_Create(fontvideo_p fv)
-{
-    glctx_p ctx = NULL;
-
-    if (!atomic_fetch_add(&GLFWInitialized, 1))
-    {
-        if (!glfwInit())
-        {
-            fprintf(fv->log_fp, "OpenGL Renderer: glfwInit() failed.\n");
-            goto FailExit;
-        }
-
-        glfwSetErrorCallback(glfw_error_callback);
-    }
-
-    ctx = calloc(1, sizeof ctx[0]);
-    if (!ctx)
-    {
-        goto FailExit;
-    }
-    ctx->fv = fv;
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-    ctx->window = glfwCreateWindow(640, 480, "", NULL, NULL);
-    if (!ctx->window)
-    {
-        fprintf(fv->log_fp, "OpenGL Renderer: glfwCreateWindow() failed.\n");
-    }
-
-    return ctx;
-FailExit:
-    glctx_Destroy(ctx);
-    return NULL;
-}
-
-static void glctx_MakeCurrent(glctx_p ctx)
-{
-    while (atomic_exchange(&ctx->lock, 1)) yield();
-    glfwMakeContextCurrent(ctx->window);
-}
-
-static void glctx_UnMakeCurrent(glctx_p ctx)
-{
-    glfwMakeContextCurrent(NULL);
-    atomic_exchange(&ctx->lock, 0);
-    glfwPollEvents();
-}
-
-static int glctx_IsAvailableNow(glctx_p ctx)
-{
-    return !ctx->lock;
-}
-
 typedef struct opengl_data_struct
 {
     GLuint PBO_src;
@@ -384,10 +304,9 @@ FailExit:
     return 0;
 }
 
-static void set_match_shader_uniforms(fontvideo_p fv)
+static void set_match_shader_uniforms(fontvideo_p fv, opengl_data_p gld)
 {
     int Location;
-    opengl_data_p gld = fv->opengl_data;
 
     Location = glGetUniformLocation(gld->match_shader, "Resolution"); // assert(Location >= 0);
     glUniform2i(Location, gld->match_width, gld->match_height);
@@ -414,10 +333,9 @@ static void set_match_shader_uniforms(fontvideo_p fv)
     glUniform1i(Location, fv->do_color_invert);
 }
 
-static void set_final_shader_uniforms(fontvideo_p fv)
+static void set_final_shader_uniforms(fontvideo_p fv, opengl_data_p gld)
 {
     int Location;
-    opengl_data_p gld = fv->opengl_data;
 
     Location = glGetUniformLocation(gld->final_shader, "Resolution"); // assert(Location >= 0);
     glUniform2i(Location, gld->final_width, gld->final_height);
@@ -444,10 +362,53 @@ static void set_final_shader_uniforms(fontvideo_p fv)
     glUniform1i(Location, fv->do_color_invert);
 }
 
-int fv_allow_opengl(fontvideo_p fv)
+static void opengl_data_destroy(opengl_data_p gld)
 {
-    glctx_p glctx = NULL;
-    opengl_data_p gld = NULL;
+    if (gld)
+    {
+        size_t i;
+
+        GLuint BuffersToDelete[] =
+        {
+            gld->PBO_src,
+            gld->PBO_final,
+            gld->PBO_final_c
+        };
+
+        GLuint TexturesToDelete[] =
+        {
+            gld->src_texture,
+            gld->match_texture,
+            gld->final_texture,
+            gld->final_texture_c,
+            gld->font_matrix_texture
+        };
+
+        GLuint FBOsToDelete[] =
+        {
+            gld->FBO_match,
+            gld->FBO_final
+        };
+
+        GLuint ShadersToDelete[] =
+        {
+            gld->match_shader,
+            gld->final_shader
+        };
+
+        glDeleteBuffers(sizeof BuffersToDelete / sizeof BuffersToDelete[0], BuffersToDelete);
+        glDeleteTextures(sizeof TexturesToDelete / sizeof TexturesToDelete[0], TexturesToDelete);
+        glDeleteFramebuffers(sizeof FBOsToDelete / sizeof FBOsToDelete[0], FBOsToDelete);
+        for (i = 0; i < sizeof ShadersToDelete / sizeof ShadersToDelete[0]; i++) glDeleteShader(ShadersToDelete[i]);
+        glDeleteVertexArrays(1, &gld->Quad_VAO);
+
+        free(gld);
+    }
+}
+
+static opengl_data_p opengl_data_create(fontvideo_p fv)
+{
+    opengl_data_p gld = calloc(1, sizeof gld[0]);
     size_t size;
     void *MapPtr;
     char *VersionStr = NULL;
@@ -469,22 +430,9 @@ int fv_allow_opengl(fontvideo_p fv)
         float TexV;
     }*Quad_Vertex = NULL;
 
-    fv->allow_opengl = 1;
+    if (!gld) goto NoMemFailExit;
 
-    fv->opengl_context = glctx = glctx_Create(fv);
-    if (!glctx) goto FailExit;
-
-    fv->opengl_data = gld = calloc(1, sizeof gld[0]);
-    if (!gld)
-    {
-        fprintf(fv->log_fp, "%s.\n", strerror(errno));
-        goto FailExit;
-    }
-
-    glctx_MakeCurrent(glctx);
-    glewInit();
-
-    VersionStr = (char*)glGetString(GL_VERSION);
+    VersionStr = (char *)glGetString(GL_VERSION);
     fprintf(fv->log_fp, "OpenGL version: %s.\n", VersionStr);
 
     if (!GLEW_VERSION_3_0)
@@ -805,7 +753,7 @@ int fv_allow_opengl(fontvideo_p fv)
 
     Location = glGetAttribLocation(gld->match_shader, "vPosition"); // assert(Location >= 0);
     glEnableVertexAttribArray(Location);
-    glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], (void*)0);
+    glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], (void *)0);
 
     Location = glGetAttribLocation(gld->match_shader, "vTexCoord"); // assert(Location >= 0);
     glEnableVertexAttribArray(Location);
@@ -829,20 +777,185 @@ int fv_allow_opengl(fontvideo_p fv)
     glActiveTexture(GL_TEXTURE0 + 4); glBindTexture(GL_TEXTURE_2D, gld->final_texture_c);
 
     glUseProgram(0);
+    return gld;
+NoMemFailExit:
+    fprintf(fv->log_fp, "OpenGL Renderer: Could not initialize OpenGL data: %s.\n", strerror(errno));
+    goto FailExit;
+FailExit:
+    free(Quad_Vertex);
+    opengl_data_destroy(gld);
+    return NULL;
+}
 
-    glctx_UnMakeCurrent(glctx);
+typedef struct glctx_struct
+{
+    fontvideo_p fv;
+    GLFWwindow *window;
+    atomic_int lock;
+    opengl_data_p data;
+}glctx_t, *glctx_p;
+
+static void glfw_error_callback(int error, const char *description)
+{
+    fprintf(stderr, "GLFW Error: (%d) %s\n", error, description);
+}
+
+static void glctx_Destroy(glctx_p ctx)
+{
+    if (ctx)
+    {
+        if (ctx->window) glfwDestroyWindow(ctx->window);
+        free(ctx);
+
+        if (atomic_fetch_sub(&GLFWInitialized, 1) == 1)
+        {
+            glfwTerminate();
+        }
+    }
+}
+
+static glctx_p glctx_Create(fontvideo_p fv)
+{
+    glctx_p ctx = NULL;
+
+    if (!atomic_fetch_add(&GLFWInitialized, 1))
+    {
+        if (!glfwInit())
+        {
+            fprintf(fv->log_fp, "OpenGL Renderer: glfwInit() failed.\n");
+            goto FailExit;
+        }
+
+        glfwSetErrorCallback(glfw_error_callback);
+    }
+
+    ctx = calloc(1, sizeof ctx[0]);
+    if (!ctx)
+    {
+        goto FailExit;
+    }
+    ctx->fv = fv;
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    ctx->window = glfwCreateWindow(640, 480, "", NULL, NULL);
+    if (!ctx->window)
+    {
+        fprintf(fv->log_fp, "OpenGL Renderer: glfwCreateWindow() failed.\n");
+    }
+
+    glfwMakeContextCurrent(ctx->window);
+    glewInit();
+    glfwMakeContextCurrent(NULL);
+
+    return ctx;
+FailExit:
+    glctx_Destroy(ctx);
+    return NULL;
+}
+
+static void glctx_MakeCurrent(glctx_p ctx)
+{
+    while (atomic_exchange(&ctx->lock, 1)) yield();
+    glfwMakeContextCurrent(ctx->window);
+}
+
+static void glctx_UnMakeCurrent(glctx_p ctx)
+{
+    glfwMakeContextCurrent(NULL);
+    atomic_exchange(&ctx->lock, 0);
+    glfwPollEvents();
+}
+
+static int glctx_IsAvailableNow(glctx_p ctx)
+{
+    return !ctx->lock;
+}
+
+static int glctx_TryMakeCurrent(glctx_p ctx)
+{
+    atomic_int expected = 0;
+    if (!glctx_IsAvailableNow(ctx)) return 0;
+    if (atomic_compare_exchange_strong(&ctx->lock, &expected, 1))
+    {
+        glfwMakeContextCurrent(ctx->window);
+        return 1;
+    }
+    else return 0;
+}
+
+typedef struct opengl_renderer_struct
+{
+    size_t count;
+    glctx_p *contexts;
+}opengl_renderer_t, *opengl_renderer_p;
+
+static void opengl_renderer_destroy(opengl_renderer_p r)
+{
+    size_t i;
+
+    if (!r) return;
+    for (i = 0; i < r->count; i++)
+    {
+        glctx_p ctx = r->contexts[i];
+        if (ctx)
+        {
+            glctx_MakeCurrent(ctx);
+            opengl_data_destroy(ctx->data);
+            glctx_UnMakeCurrent(ctx);
+            glctx_Destroy(ctx);
+        }
+    }
+    free(r);
+}
+
+static opengl_renderer_p opengl_renderer_create(fontvideo_p fv)
+{
+    opengl_renderer_p r = NULL;
+    size_t ctx_count = omp_get_max_threads();
+    size_t i;
+    if (!ctx_count) ctx_count = 1;
+
+    r = malloc(sizeof r[0]);
+    if (!r) goto NoMemFailExit;
+    memset(r, 0, sizeof r[0]);
+
+    r->count = ctx_count;
+    r->contexts = calloc(ctx_count, sizeof r->contexts[0]);
+    if (!r->contexts) goto NoMemFailExit;
+
+    for (i = 0; i < ctx_count; i++)
+    {
+        glctx_p ctx = glctx_Create(fv);
+        if (!ctx) goto FailExit;
+        r->contexts[i] = ctx;
+        glctx_MakeCurrent(ctx);
+        ctx->data = opengl_data_create(fv);
+        glctx_UnMakeCurrent(ctx);
+        if (!ctx->data) goto FailExit;
+    }
+
+    return r;
+NoMemFailExit:
+    fprintf(fv->log_fp, "OpenGL Renderer: Failed to initialize: %s.\n", strerror(errno));
+    goto FailExit;
+FailExit:
+    opengl_renderer_destroy(r);
+    return NULL;
+}
+
+int fv_allow_opengl(fontvideo_p fv)
+{
+    fv->allow_opengl = 1;
+    fv->opengl_renderer = opengl_renderer_create(fv);
+    if (!fv->opengl_renderer) goto FailExit;
     return 1;
 FailExit:
-    if (glctx) glctx_UnMakeCurrent(glctx);
-    free(Quad_Vertex);
-    fv->opengl_context = NULL;
-    fv->opengl_data = NULL;
-    glctx_Destroy(glctx);
-    free(gld);
     fprintf(fv->log_fp, "Giving up using OpenGL.\n");
     fv->allow_opengl = 0;
     return 0;
 }
+
 #else
 int fv_allow_opengl(fontvideo_p fv)
 {
@@ -1491,20 +1604,17 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
 }
 
 #ifdef FONTVIDEO_ALLOW_OPENGL
-static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
+static void do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_data_p gld)
 {
-    opengl_data_p gld = fv->opengl_data;
-    GLuint FBO_match = gld->FBO_match;
-    GLuint FBO_final = gld->FBO_final;
     size_t size;
     void *MapPtr;
-    GLenum DrawBuffers[2];
+    GLenum DrawBuffers[2] = {0};
+    GLuint FBO_match = gld->FBO_match;
+    GLuint FBO_final = gld->FBO_final;
     GLuint src_texture = gld->src_texture;
     GLuint match_texture = gld->match_texture;
     GLuint final_texture = gld->final_texture;
     GLuint final_texture_c = gld->final_texture_c;
-
-    glctx_MakeCurrent(fv->opengl_context);
 
     if (fv->verbose)
     {
@@ -1535,7 +1645,7 @@ static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
     assert(glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
 
     glUseProgram(gld->match_shader);
-    set_match_shader_uniforms(fv);
+    set_match_shader_uniforms(fv, gld);
     glBindVertexArray(gld->Quad_VAO);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
@@ -1553,7 +1663,7 @@ static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
     assert(glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
 
     glUseProgram(gld->final_shader);
-    set_final_shader_uniforms(fv);
+    set_final_shader_uniforms(fv, gld);
     glBindVertexArray(gld->Quad_VAO);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
@@ -1575,8 +1685,6 @@ static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
     memcpy(f->c_data, MapPtr, size);
     glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
 
-    glctx_UnMakeCurrent(fv->opengl_context);
-
     if (fv->verbose)
     {
         fprintf(fv->log_fp, "Finished GPU rendering a frame. (%d)\n", get_thread_id());
@@ -1594,10 +1702,49 @@ static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
     }*/
 }
 
+static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
+{
+    opengl_renderer_p r = NULL;
+    glctx_p ctx = NULL;
+    size_t i;
+
+    r = fv->opengl_renderer;
+    while (!ctx)
+    {
+        for (i = 0; i < r->count; i++)
+        {
+            glctx_p test = r->contexts[i];
+            if (glctx_TryMakeCurrent(test))
+            {
+                ctx = test;
+                break;
+            }
+        }
+        if (!ctx) yield();
+    }
+    do_opengl_render_command(fv, f, ctx->data);
+    glctx_UnMakeCurrent(ctx);
+}
+
 static void do_gpu_or_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
 {
-    if (glctx_IsAvailableNow(fv->opengl_context)) do_gpu_render(fv, f);
-    else do_cpu_render(fv, f);
+    opengl_renderer_p r = NULL;
+    size_t i;
+
+    r = fv->opengl_renderer;
+    if (r)
+    {
+        for (i = 0; i < r->count; i++)
+        {
+            glctx_p ctx = r->contexts[i];
+            if (glctx_TryMakeCurrent(ctx))
+            {
+                do_opengl_render_command(fv, f, ctx->data);
+                glctx_UnMakeCurrent(ctx);
+            }
+        }
+        do_cpu_render(fv, f);
+    }
 }
 #endif
 
@@ -1612,7 +1759,7 @@ static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
     unlock_frame(fv);
 
 #ifdef FONTVIDEO_ALLOW_OPENGL
-    if (fv->allow_opengl && fv->opengl_context && fv->opengl_data)
+    if (fv->allow_opengl && fv->opengl_renderer)
     {
         if (fv->real_time_play) do_gpu_render(fv, f);
         else do_gpu_or_cpu_render(fv, f);
@@ -2525,7 +2672,7 @@ int fv_show_prepare(fontvideo_p fv)
     if (fv->prepared) return 1;
 
     fprintf(fv->log_fp, "Pre-rendering frames.\n");
-    if (fv->allow_opengl && fv->opengl_context && fv->opengl_data) mt = 0;
+    if (fv->allow_opengl && fv->opengl_renderer) mt = 0;
 
     if (fv->real_time_play)
     {
@@ -2604,7 +2751,7 @@ int fv_render(fontvideo_p fv)
 
     if (!fv) return 0;
 
-    if (run_mt && fv->allow_opengl && fv->opengl_context && fv->opengl_data && !fv->real_time_play)
+    if (run_mt && fv->allow_opengl && fv->opengl_renderer && !fv->real_time_play)
     {
 #pragma omp parallel sections
         {
