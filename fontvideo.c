@@ -1273,18 +1273,26 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
     ptrdiff_t si;
     char *font_raw_code = NULL;
     char *ch;
+    uint32_t code = 0;
     size_t font_raw_code_size = 0;
     size_t font_count_max = 0;
-    uint32_t code;
     size_t expected_font_code_count = 0;
     size_t font_pixel_count;
 
     // snprintf(buf, sizeof buf, "%s"SUBDIR"%s", assets_dir, meta_file);
     d_meta = dictcfg_load(meta_file, log_fp); // Parse ini file
-    if (!d_meta) goto FailExit;
+    if (!d_meta)
+    {
+        fprintf(log_fp, "Could not load meta-file: '%s'.\n", meta_file);
+        goto FailExit;
+    }
 
     d_font = dictcfg_section(d_meta, "[font]"); // Extract section
-    if (!d_font) goto FailExit;
+    if (!d_font)
+    {
+        fprintf(log_fp, "Meta-file '%s' don't have `[font]` section.\n", meta_file);
+        goto FailExit;
+    }
 
     font_bmp = dictcfg_getstr(d_font, "font_bmp", "font.bmp");
     font_code_txt = dictcfg_getstr(d_font, "font_code", "gb2312_code.txt");
@@ -1470,12 +1478,12 @@ static fontvideo_frame_p frame_create(uint32_t w, uint32_t h, double timestamp, 
     f->h = h;
 
     // Char code buffer
-    f->data = calloc(w * h, sizeof f->data[0]); if (!f->data) goto FailExit;
-    f->row = malloc(h * sizeof f->row[0]); if (!f->row) goto FailExit;
+    f->data = calloc((size_t)w * h, sizeof f->data[0]); if (!f->data) goto FailExit;
+    f->row = calloc(h, sizeof f->row[0]); if (!f->row) goto FailExit;
 
     // Char color buffer
-    f->c_data = malloc((size_t)w * h); if (!f->c_data) goto FailExit;
-    f->c_row = malloc(h * sizeof f->c_row[0]); if (!f->c_row) goto FailExit;
+    f->c_data = calloc((size_t)w * h, sizeof f->c_data[0]); if (!f->c_data) goto FailExit;
+    f->c_row = calloc(h, sizeof f->c_row[0]); if (!f->c_row) goto FailExit;
 
     // Create row pointers for faster access to the matrix slots
     for (i = 0; i < (ptrdiff_t)h; i++)
@@ -1487,8 +1495,8 @@ static fontvideo_frame_p frame_create(uint32_t w, uint32_t h, double timestamp, 
     // Source bitmap buffer
     f->raw_w = bmp_width;
     f->raw_h = bmp_height;
-    f->raw_data = malloc(bmp_pitch * bmp_height); if (!f->raw_data) goto FailExit;
-    f->raw_data_row = malloc(bmp_height * sizeof f->raw_data_row[0]); if (!f->raw_data_row) goto FailExit;
+    f->raw_data = calloc(bmp_height, bmp_pitch); if (!f->raw_data) goto FailExit;
+    f->raw_data_row = calloc(bmp_height, sizeof f->raw_data_row[0]); if (!f->raw_data_row) goto FailExit;
 
     // Copy the source bitmap whilst creating row pointers.
 #pragma omp parallel for
@@ -2081,7 +2089,7 @@ static fontvideo_audio_p audio_create(void *samples, int channel_count, size_t n
 
     a->timestamp = timestamp;
     a->frames = num_samples_per_channel;
-    a->buffer = malloc(num_samples_per_channel * channel_count * sizeof a->buffer[0]);
+    a->buffer = calloc(num_samples_per_channel * channel_count, sizeof a->buffer[0]);
     if (!a->buffer) goto FailExit;
     switch (channel_count)
     {
@@ -2862,6 +2870,7 @@ fontvideo_p fv_create
     // Wide-glyph detect
     if (fv->font_w > fv->font_h / 2)
     {
+        fv->font_is_wide = 1;
         fv->output_w /= 2;
     }
 
@@ -2912,8 +2921,8 @@ int fv_show_prepare(fontvideo_p fv)
     if (fv->real_time_play)
     {
         rttimer_init(&tmr, 0);
-        bar_len = fv->output_w - 1;
-        bar_buf = calloc(bar_len + 1, 1);
+        bar_len = fv->output_w * (1 + fv->font_is_wide) - 1;
+        bar_buf = calloc((size_t)bar_len + 1, 1);
         do_decode(fv, 0);
         while (fv->rendered_frame_count + fv->rendering_frame_count < fv->precached_frame_count)
         {
