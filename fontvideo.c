@@ -3001,9 +3001,9 @@ int fv_render(fontvideo_p fv)
         for (;;)
         {
             if ((!fv->tailed && !do_decode(fv, 1)) ||
-                (fv->frames && fv->rendered_frame_count && !output_rendered_video(fv, rttimer_gettime(&fv->tmr)) ||
+                (fv->frames && fv->rendered_frame_count && !output_rendered_video(fv, rttimer_gettime(&fv->tmr))) ||
                 (fv->frames && fv->precached_frame_count > fv->rendered_frame_count && !get_frame_and_render(fv)) ||
-                    0))
+                    0)
             {
                 continue;
             }

@@ -33,7 +33,9 @@ static void write_callback(struct SoundIoOutStream *outstream, int frame_count_m
 	int i, j;
 	int err;
 
+#ifdef _MSC_VER
 	frame_count_min;
+#endif
 	if (s->channel_count != layout->channel_count || !s->pointers_of_channels || !s->sample_pointer_steps)
 	{
 		s->channel_count = 0;
