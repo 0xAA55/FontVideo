@@ -365,6 +365,22 @@ static void opengl_data_destroy(opengl_data_p gld)
     }
 }
 
+static const char *strOpenGLError(GLenum glerr)
+{
+    switch (glerr)
+    {
+    case GL_NO_ERROR: return "GL_NO_ERROR";
+    case GL_INVALID_ENUM: return "GL_INVALID_ENUM";
+    case GL_INVALID_VALUE: return "GL_INVALID_VALUE";
+    case GL_INVALID_OPERATION: return "GL_INVALID_OPERATION";
+    case GL_INVALID_FRAMEBUFFER_OPERATION: return "GL_INVALID_FRAMEBUFFER_OPERATION";
+    case GL_OUT_OF_MEMORY: return "GL_OUT_OF_MEMORY";
+    case GL_STACK_UNDERFLOW: return "GL_STACK_UNDERFLOW";
+    case GL_STACK_OVERFLOW: return "GL_STACK_OVERFLOW";
+    default: return "Unknown OpenGL Error";
+    }
+}
+
 static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
 {
     opengl_data_p gld = calloc(1, sizeof gld[0]);
@@ -378,6 +394,7 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
     GLint max_fbo_width;
     GLint max_fbo_height;
     GLint Location;
+    GLenum err_code = GL_NO_ERROR;
     int InstMatrixWidth;
     int InstMatrixHeight;
     struct Quad_Vertex_Struct
@@ -565,7 +582,7 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
         int InstCount = InstMatrixWidth * InstMatrixHeight;
         int LoopCount = (int)(fv->font_code_count / InstCount);
         fprintf(fv->log_fp, "OpenGL Renderer: match size: %d x %d.\n", match_width, match_height);
-        fprintf(fv->log_fp, "Expected loop count '%d' for total code count %zu (%d tests run in a pass).\n", LoopCount, fv->font_code_count, InstCount);
+        fprintf(fv->log_fp, "Expected loop count '%d' for total code count %zu (%d x %d = %d tests run in a pass).\n", LoopCount, fv->font_code_count, InstMatrixWidth, InstMatrixHeight, InstCount);
     }
 
     gld->reduction_width = match_width;
@@ -795,7 +812,18 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
     glBindVertexArray(0);
 
     glUseProgram(0);
+
+    err_code = glGetError();
+    if (err_code != GL_NO_ERROR) goto OpenGLErrorExit;
+
     return gld;
+OpenGLErrorExit:
+    do
+    {
+        fprintf(fv->log_fp, "OpenGL Renderer: OpenGL error occured: %u (%s).\n", err_code, strOpenGLError(err_code));
+        err_code = glGetError();
+    } while (err_code != GL_NO_ERROR);
+    goto FailExit;
 NoMemFailExit:
     fprintf(fv->log_fp, "OpenGL Renderer: Could not initialize OpenGL data: %s.\n", strerror(errno));
     goto FailExit;
@@ -950,7 +978,7 @@ static opengl_renderer_p opengl_renderer_create(fontvideo_p fv)
 {
     opengl_renderer_p r = NULL;
     int ctx_count = omp_get_max_threads();
-    int i;
+    int i, j;
     if (!ctx_count) ctx_count = 1;
 
     r = malloc(sizeof r[0]);
@@ -969,18 +997,36 @@ static opengl_renderer_p opengl_renderer_create(fontvideo_p fv)
         ctx = glctx_Create(fv);
         if (ctx)
         {
-            r->contexts[i] = ctx;
             glctx_MakeCurrent(ctx);
             ctx->data = opengl_data_create(fv, !i);
             glctx_UnMakeCurrent(ctx);
+            if (ctx->data)
+            {
+                r->contexts[i] = ctx;
+            }
+            else
+            {
+                r->contexts[i] = NULL;
+#pragma omp critical
+                glctx_Destroy(ctx);
+            }
         }
     }
 
-    for (i = 0; i < ctx_count; i++)
+    for (i = j = 0; i < ctx_count; i++)
     {
         glctx_p ctx = r->contexts[i];
-        if (!ctx) goto FailExit;
-        if (!ctx->data) goto FailExit;
+        if (ctx) r->contexts[j++] = ctx;
+    }ctx_count = j;
+    if (!ctx_count)
+    {
+        fprintf(fv->log_fp, "OpenGL Renderer: None of the OpenGL contexts finished initializing.\n");
+        goto FailExit;
+    }
+    if (r->count != ctx_count)
+    {
+        fprintf(fv->log_fp, "OpenGL Renderer: Only some of the OpenGL contexts (%d out of %zu) finished initializing.\n", ctx_count, r->count);
+        r->count = ctx_count;
     }
 
     return r;
@@ -1669,10 +1715,10 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
 }
 
 #ifdef FONTVIDEO_ALLOW_OPENGL
-static void do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_data_p gld)
+static int do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_data_p gld)
 {
     GLint Location;
-    size_t size;
+    size_t size, i;
     void *MapPtr;
     GLenum DrawBuffers[2] = {0};
     GLuint FBO_match = gld->FBO_match;
@@ -1684,11 +1730,13 @@ static void do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl
     GLuint final_texture_c = gld->final_texture_c;
     GLuint reduction_tex1 = gld->reduction_texture1;
     GLuint reduction_tex2 = gld->reduction_texture2;
+    GLenum err_code = GL_NO_ERROR;
     int reduction_src_width;
     int reduction_src_height;
     int reduction_dst_width;
     int reduction_dst_height;
     int reduction_pass = 0;
+    int retval = 1;
 
     if (fv->verbose)
     {
@@ -1717,7 +1765,7 @@ static void do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl
     glViewport(0, 0, gld->match_width, gld->match_height);
     glBindFragDataLocation(gld->match_shader, 0, "Output");
 
-    assert(glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
+    if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) goto FBONotCompleteExit;
 
     glUseProgram(gld->match_shader);
 
@@ -1837,7 +1885,7 @@ static void do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl
         glViewport(0, 0, reduction_dst_width, reduction_dst_height);
         glBindFragDataLocation(gld->reduction_shader, 0, "Output");
 
-        assert(glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
+        if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) goto FBONotCompleteExit;
 
         glUseProgram(gld->reduction_shader);
 
@@ -1883,7 +1931,7 @@ static void do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl
     glBindFragDataLocation(gld->final_shader, 0, "Output");
     glBindFragDataLocation(gld->final_shader, 1, "Color");
 
-    assert(glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
+    if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) goto FBONotCompleteExit;
 
     glUseProgram(gld->final_shader);
 
@@ -1909,6 +1957,7 @@ static void do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl
 
     glBindVertexArray(gld->Quad_VAO);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 
     glActiveTexture(GL_TEXTURE0 + 3);
     glBindTexture(GL_TEXTURE_2D, final_texture);
@@ -1919,6 +1968,21 @@ static void do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl
     memcpy(f->data, MapPtr, size);
     glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
 
+    size = gld->final_width * gld->final_height;
+    retval = 0;
+    for (i = 0; i < size; i++)
+    {
+        if (f->data[i] != 0)
+        {
+            retval = 1;
+            break;
+        }
+    }
+    if (!retval)
+    {
+        goto BlackScreenFailExit;
+    }
+
     glActiveTexture(GL_TEXTURE0 + 4);
     glBindTexture(GL_TEXTURE_2D, final_texture_c);
     size = (size_t)gld->final_width * gld->final_height;
@@ -1927,22 +1991,30 @@ static void do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl
     MapPtr = glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
     memcpy(f->c_data, MapPtr, size);
     glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+
+    err_code = glGetError();
+    while (err_code != GL_NO_ERROR)
+    {
+        fprintf(fv->log_fp, "OpenGL Renderer (%d): Failed to GPU rendering a frame: %u (%s)\n", get_thread_id(), err_code, strOpenGLError(err_code));
+        retval = 0;
+        err_code = glGetError();
+    }
+    if (!retval) goto FailExit;
 
     if (fv->verbose)
     {
         fprintf(fv->log_fp, "Finished GPU rendering a frame. (%d)\n", get_thread_id());
     }
 
-    /*
-    for (y = 0; y < (int)f->h; y++)
-    {
-        uint32_t *row = f->row[y];
-        for (x = 0; x < (int)f->w - 1; x++)
-        {
-            row[x] = fv->font_codes[row[x]];
-        }
-        row[x] = '\n';
-    }*/
+    return retval;
+BlackScreenFailExit:
+    fprintf(fv->log_fp, "OpenGL Renderer: Black screen output detected, this should be an OpenGL error.\n");
+    goto FailExit;
+FBONotCompleteExit:
+    fprintf(fv->log_fp, "OpenGL Renderer: `Framebuffer not complete` occured.\n");
+FailExit:
+    return 0;
 }
 
 static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
@@ -1954,19 +2026,48 @@ static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
     r = fv->opengl_renderer;
     while (!ctx)
     {
+        size_t ctx_cnt = 0;
         for (i = 0; i < r->count; i++)
         {
             glctx_p test = r->contexts[i];
+            if (!test) continue;
+            ctx_cnt++;
             if (glctx_TryMakeCurrent(test))
             {
                 ctx = test;
-                break;
+                if (do_opengl_render_command(fv, f, ctx->data))
+                {
+                    glctx_UnMakeCurrent(ctx);
+                    return;
+                }
+                else
+                {
+                    atomic_exchange(&(r->contexts[i]), NULL);
+                    opengl_data_destroy(ctx->data);
+                    glctx_UnMakeCurrent(ctx);
+                    glctx_Destroy(ctx);
+                    ctx = NULL;
+                    fprintf(fv->log_fp, "OpenGL Renderer failed to render the frame, delete the renderer to free memory.\n");
+                }
             }
+        }
+        if (!ctx_cnt)
+        {
+#pragma omp critical
+            {
+                r = fv->opengl_renderer;
+                fv->opengl_renderer = NULL;
+                if (r)
+                {
+                    opengl_renderer_destroy(r);
+                    fprintf(fv->log_fp, "None of the OpenGL Renderer is available, back to the CPU Renderer.\n");
+                }
+            }
+            do_cpu_render(fv, f);
+            return;
         }
         if (!ctx) yield();
     }
-    do_opengl_render_command(fv, f, ctx->data);
-    glctx_UnMakeCurrent(ctx);
 }
 
 static void do_gpu_or_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
@@ -1980,11 +2081,23 @@ static void do_gpu_or_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
         for (i = 0; i < r->count; i++)
         {
             glctx_p ctx = r->contexts[i];
+            if (!ctx) continue;
             if (glctx_TryMakeCurrent(ctx))
             {
-                do_opengl_render_command(fv, f, ctx->data);
-                glctx_UnMakeCurrent(ctx);
-                return;
+                if (do_opengl_render_command(fv, f, ctx->data))
+                {
+                    glctx_UnMakeCurrent(ctx);
+                    return;
+                }
+                else
+                {
+                    atomic_exchange(&(r->contexts[i]), NULL);
+                    opengl_data_destroy(ctx->data);
+                    glctx_UnMakeCurrent(ctx);
+                    glctx_Destroy(ctx);
+                    ctx = NULL;
+                    fprintf(fv->log_fp, "OpenGL Renderer failed to render the frame, delete the renderer to free memory.\n");
+                }
             }
         }
     }
