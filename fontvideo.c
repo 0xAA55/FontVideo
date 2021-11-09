@@ -1586,6 +1586,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             float src_normalize = 0;
             float best_score = -9999999.0f;
             int bright = 0;
+            uint8_t col = 0;
             sx = fx * fv->font_w;
 
             // Replace the rightmost char to newline
@@ -1699,11 +1700,16 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             bright = (avr_r + avr_g + avr_b > 127 + 127 + 127);
 
             // Encode the color into 3-bit BGR with 1-bit brightness
-            c_row[fx] =
+            col =
                 ((avr_b & 0x80) >> 5) |
                 ((avr_g & 0x80) >> 6) |
                 ((avr_r & 0x80) >> 7) |
                 (bright ? 0x08 : 0x00);
+
+            // Avoid generating pure black characters.
+            if (!col) col = 0x08;
+
+            c_row[fx] = col;
         }
 
         free(src_lum_buffer);
