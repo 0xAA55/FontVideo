@@ -743,6 +743,7 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
         "            Color = i;"
         "        }"
         "    }"
+        "    if (Color == 0) Color = 8;"
         "}"
     );
     if (!gld->final_shader) goto FailExit;
@@ -2916,7 +2917,6 @@ int fv_show_prepare(fontvideo_p fv)
     if (fv->prepared) return 1;
 
     fprintf(fv->log_fp, "Pre-rendering frames.\n");
-    if (fv->allow_opengl && fv->opengl_renderer) mt = 0;
 
     if (fv->real_time_play)
     {
