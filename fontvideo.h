@@ -72,6 +72,7 @@ typedef struct fontvideo_struct
     uint32_t font_mat_h;
     size_t font_code_count;
     uint32_t *font_codes;
+    int font_is_wide;
     int font_is_blackwhite;
 
     int prepared;
