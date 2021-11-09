@@ -25,7 +25,7 @@
 #include"utf.h"
 
 #ifdef _DEBUG
-#   define DEBUG_OUTPUT_TO_SCREEN 1
+// #   define DEBUG_OUTPUT_TO_SCREEN 1
 #endif
 
 static int get_thread_id()
@@ -232,6 +232,8 @@ typedef struct opengl_data_struct
     int reduction_width;
     int reduction_height;
     GLuint reduction_shader;
+    GLuint PBO_reduction;
+    size_t PBO_reduction_size;
 
     GLuint FBO_final;
     GLuint PBO_final;
@@ -326,6 +328,7 @@ static void opengl_data_destroy(opengl_data_p gld)
         GLuint BuffersToDelete[] =
         {
             gld->PBO_src,
+            gld->PBO_reduction,
             gld->PBO_final,
             gld->PBO_final_c
         };
@@ -1724,7 +1727,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
 static int do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_data_p gld)
 {
     GLint Location;
-    size_t size, i;
+    size_t size;
     void *MapPtr;
     GLenum DrawBuffers[2] = {0};
     GLuint FBO_match = gld->FBO_match;
@@ -1813,13 +1816,13 @@ static int do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_
     while(1)
     {
         const int max_reduction_scale = 32;
-        int i;
         int src_instmat_w = 0;
         int src_instmat_h = 0;
         int dst_instmat_w = 0;
         int dst_instmat_h = 0;
         int reduction_x = 0;
         int reduction_y = 0;
+        int i;
 
         reduction_pass++;
 
@@ -1945,7 +1948,7 @@ static int do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_
     glUniform2i(Location, gld->final_width, gld->final_height);
 
     Location = glGetUniformLocation(gld->final_shader, "ReductionTex"); // assert(Location >= 0);
-    glActiveTexture(GL_TEXTURE0 + 2); glBindTexture(GL_TEXTURE_2D, reduction_tex2);
+    glActiveTexture(GL_TEXTURE0 + 2); glBindTexture(GL_TEXTURE_2D, reduction_tex1);
     glUniform1i(Location, 2);
 
     Location = glGetUniformLocation(gld->final_shader, "GlyphSize"); // assert(Location >= 0);
@@ -1974,14 +1977,18 @@ static int do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_
     memcpy(f->data, MapPtr, size);
     glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
 
-    size = gld->final_width * gld->final_height;
+    size = (size_t)gld->final_width * gld->final_height;
     retval = 0;
-    for (i = 0; i < size; i++)
+    if (size)
     {
-        if (f->data[i] != 0)
+        size_t i;
+        for (i = 0; i < size; i++)
         {
-            retval = 1;
-            break;
+            if (f->data[i] != 0)
+            {
+                retval = 1;
+                break;
+            }
         }
     }
     if (!retval)
@@ -2048,7 +2055,7 @@ static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
                 }
                 else
                 {
-                    atomic_exchange(&(r->contexts[i]), NULL);
+                    *(volatile glctx_p*)&(r->contexts[i]) = NULL;
                     opengl_data_destroy(ctx->data);
                     glctx_UnMakeCurrent(ctx);
                     glctx_Destroy(ctx);
@@ -2097,7 +2104,7 @@ static void do_gpu_or_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                 }
                 else
                 {
-                    atomic_exchange(&(r->contexts[i]), NULL);
+                    *(volatile glctx_p*)&(r->contexts[i]) = NULL;
                     opengl_data_destroy(ctx->data);
                     glctx_UnMakeCurrent(ctx);
                     glctx_Destroy(ctx);
