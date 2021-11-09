@@ -960,25 +960,25 @@ static opengl_renderer_p opengl_renderer_create(fontvideo_p fv)
     r->contexts = calloc(ctx_count, sizeof r->contexts[0]);
     if (!r->contexts) goto NoMemFailExit;
 
-    for (i = 0; i < ctx_count; i++)
-    {
-        glctx_p ctx = glctx_Create(fv);
-        if (!ctx) goto FailExit;
-        r->contexts[i] = ctx;
-    }
-
 #pragma omp parallel for
     for (i = 0; i < ctx_count; i++)
     {
-        glctx_p ctx = r->contexts[i];
-        glctx_MakeCurrent(ctx);
-        ctx->data = opengl_data_create(fv, !i);
-        glctx_UnMakeCurrent(ctx);
+        glctx_p ctx;
+#pragma omp critical
+        ctx = glctx_Create(fv);
+        if (ctx)
+        {
+            r->contexts[i] = ctx;
+            glctx_MakeCurrent(ctx);
+            ctx->data = opengl_data_create(fv, !i);
+            glctx_UnMakeCurrent(ctx);
+        }
     }
 
     for (i = 0; i < ctx_count; i++)
     {
         glctx_p ctx = r->contexts[i];
+        if (!ctx) goto FailExit;
         if (!ctx->data) goto FailExit;
     }
 
