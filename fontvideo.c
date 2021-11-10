@@ -983,7 +983,7 @@ static opengl_renderer_p opengl_renderer_create(fontvideo_p fv, int opengl_threa
     int ctx_count = opengl_threads;
     int i, j;
 
-    if (!ctx_count) ctx_count = omp_get_max_threads();
+    if (!ctx_count) ctx_count = omp_get_max_threads() / 4;
     if (!ctx_count) ctx_count = 1;
 
     r = malloc(sizeof r[0]);
@@ -3122,8 +3122,10 @@ int fv_render(fontvideo_p fv)
 {
 #ifdef _OPENMP
     int run_mt = 1;
+    int thread_count = omp_get_max_threads();
 #else
     int run_mt = 0;
+    int thread_count = 1;
 #endif
 
     if (!fv) return 0;
@@ -3133,9 +3135,10 @@ int fv_render(fontvideo_p fv)
 #pragma omp parallel
         for (;;)
         {
-            if ((!fv->tailed && !do_decode(fv, 1)) ||
+            if ( 0 ||
                 (fv->frames && fv->rendered_frame_count && !output_rendered_video(fv, rttimer_gettime(&fv->tmr))) ||
                 (fv->frames && fv->precached_frame_count > fv->rendered_frame_count && !get_frame_and_render(fv)) ||
+                ((fv->real_time_play ? 1 : (int)fv->precached_frame_count < thread_count * 2) && !fv->tailed && !do_decode(fv, 1)) ||
                     0)
             {
                 continue;

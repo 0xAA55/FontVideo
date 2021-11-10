@@ -39,7 +39,7 @@ void usage(char *argv0)
         "\t--invert-color: [Optional] Do color invert.\n"
         "\t--no-opengl: [Optional] Do not use OpenGL to accelerate rendering.\n"
         "\t--no-frameskip: [Optional] Do not skip frames, which may cause video and audio could not sync.\n"
-        "\t--opengl-threads: [Optional] Set the OpenGL Renderer's thread number, default to your CPU thread number.\n"
+        "\t--opengl-threads: [Optional] Set the OpenGL Renderer's thread number, default to your CPU thread number divide 4.\n"
         "\t--assets-meta: [Optional] Use specified meta file, default is to use 'assets"SUBDIR"meta.ini'.\n"
         "\t--output-frame-image-sequence: [Optional] Output each frame image to a directory. The format of the image is `bmp`.\n"
         "", argv0, argv0);
