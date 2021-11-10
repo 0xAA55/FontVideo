@@ -977,11 +977,13 @@ static void opengl_renderer_destroy(opengl_renderer_p r)
     free(r);
 }
 
-static opengl_renderer_p opengl_renderer_create(fontvideo_p fv)
+static opengl_renderer_p opengl_renderer_create(fontvideo_p fv, int opengl_threads)
 {
     opengl_renderer_p r = NULL;
-    int ctx_count = omp_get_max_threads();
+    int ctx_count = opengl_threads;
     int i, j;
+
+    if (!ctx_count) ctx_count = omp_get_max_threads();
     if (!ctx_count) ctx_count = 1;
 
     r = malloc(sizeof r[0]);
@@ -1031,6 +1033,10 @@ static opengl_renderer_p opengl_renderer_create(fontvideo_p fv)
         fprintf(fv->log_fp, "OpenGL Renderer: Only some of the OpenGL contexts (%d out of %zu) finished initializing.\n", ctx_count, r->count);
         r->count = ctx_count;
     }
+    else
+    {
+        fprintf(fv->log_fp, "OpenGL Renderer: Working thread number: %d.\n", opengl_threads);
+    }
 
     return r;
 NoMemFailExit:
@@ -1041,10 +1047,10 @@ FailExit:
     return NULL;
 }
 
-int fv_allow_opengl(fontvideo_p fv)
+int fv_allow_opengl(fontvideo_p fv, int opengl_threads)
 {
     fv->allow_opengl = 1;
-    fv->opengl_renderer = opengl_renderer_create(fv);
+    fv->opengl_renderer = opengl_renderer_create(fv, opengl_threads);
     if (!fv->opengl_renderer) goto FailExit;
     return 1;
 FailExit:
@@ -1054,7 +1060,7 @@ FailExit:
 }
 
 #else
-int fv_allow_opengl(fontvideo_p fv)
+int fv_allow_opengl(fontvideo_p fv, int opengl_threads)
 {
     fprintf(fv->log_fp, "Macro `FONTVIDEO_ALLOW_OPENGL` not defined when compiling, giving up using OpenGL.\n");
     return 0;
