@@ -62,6 +62,7 @@ typedef struct fontvideo_struct
     int allow_opengl;
     int no_frameskip;
     int do_color_invert;
+    int opengl_threads;
     void *opengl_renderer;
 
     char *font_face;
@@ -129,7 +130,7 @@ fontvideo_p fv_create
     double start_timestamp
 );
 
-int fv_allow_opengl(fontvideo_p fv);
+int fv_allow_opengl(fontvideo_p fv, int opengl_threads);
 int fv_show_prepare(fontvideo_p fv);
 int fv_show(fontvideo_p fv);
 int fv_render(fontvideo_p fv);

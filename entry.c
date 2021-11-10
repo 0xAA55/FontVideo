@@ -13,7 +13,7 @@
 
 void usage(char *argv0)
 {
-    fprintf(stderr, "Usage: %s -i <input> [-o <output.txt>] [-v] [-p <seconds>] [-m] [-w <width>] [-h <height>] [-s <width> <height>] [-S <from_sec>] [-b] [--invert-color] [--no-opengl] [--no-frameskip] [--assets-meta <metafile.ini>] [--output-frame-image-sequence <prefix>]\n"
+    fprintf(stderr, "Usage: %s -i <input> [-o <output.txt>] [-v] [-p <seconds>] [-m] [-w <width>] [-h <height>] [-s <width> <height>] [-S <from_sec>] [-b] [--invert-color] [--no-opengl] [--no-frameskip] [--opengl-threads <number>] [--assets-meta <metafile.ini>] [--output-frame-image-sequence <prefix>]\n"
         "Or: %s <input>\n"
         "\t-i: Specify the input video file name.\n"
         "\t-o: [Optional] Specify the output text file name.\n"
@@ -39,6 +39,7 @@ void usage(char *argv0)
         "\t--invert-color: [Optional] Do color invert.\n"
         "\t--no-opengl: [Optional] Do not use OpenGL to accelerate rendering.\n"
         "\t--no-frameskip: [Optional] Do not skip frames, which may cause video and audio could not sync.\n"
+        "\t--opengl-threads: [Optional] Set the OpenGL Renderer's thread number, default to your CPU thread number.\n"
         "\t--assets-meta: [Optional] Use specified meta file, default is to use 'assets"SUBDIR"meta.ini'.\n"
         "\t--output-frame-image-sequence: [Optional] Output each frame image to a directory. The format of the image is `bmp`.\n"
         "", argv0, argv0);
@@ -62,6 +63,7 @@ int main(int argc, char **argv)
     int no_colors = 0;
     int no_opengl = 0;
     int no_frameskip = 0;
+    int opengl_threads = 0; // 0 for default.
     char *assets_meta = "assets"SUBDIR"meta.ini";
     char *output_frame_images_prefix = NULL;
     FILE *fp_log = stderr;
@@ -186,6 +188,11 @@ int main(int argc, char **argv)
                 i++;
                 no_frameskip = 1;
             }
+            else if (!strcmp(argv[i], "--opengl-threads"))
+            {
+                if (++i >= argc) goto BadUsageExit;
+                opengl_threads = atoi(argv[i++]);
+            }
             else if (!strcmp(argv[i], "--assets-meta"))
             {
                 if (++i >= argc) goto BadUsageExit;
@@ -253,7 +260,7 @@ int main(int argc, char **argv)
     if (!fv) goto FailExit;
 
     if (no_colors) fv->do_colored_output = 0;
-    if (!no_opengl) fv_allow_opengl(fv);
+    if (!no_opengl) fv_allow_opengl(fv, opengl_threads);
     if (no_frameskip) fv->no_frameskip = 1;
     if (do_color_invert) fv->do_color_invert = 1;
     if (output_frame_images_prefix) fv->output_frame_images_prefix = output_frame_images_prefix;
