@@ -2137,8 +2137,9 @@ static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
 #ifdef FONTVIDEO_ALLOW_OPENGL
     if (fv->allow_opengl && fv->opengl_renderer)
     {
-        if (fv->real_time_play) do_gpu_render(fv, f);
-        else do_gpu_or_cpu_render(fv, f);
+        do_gpu_render(fv, f);
+        // if (fv->real_time_play) do_gpu_render(fv, f);
+        // else do_gpu_or_cpu_render(fv, f);
     }
     else
 #endif
