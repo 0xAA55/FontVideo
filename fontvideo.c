@@ -398,8 +398,9 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
     GLint max_fbo_height;
     GLint Location;
     GLenum err_code = GL_NO_ERROR;
-    int InstMatrixWidth;
-    int InstMatrixHeight;
+    int inst_matrix_width;
+    int inst_matrix_height;
+    const int min_loop_count = 5;
     struct Quad_Vertex_Struct
     {
         float PosX;
@@ -474,26 +475,28 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
 
     match_width = fv->output_w;
     match_height = fv->output_h;
-    InstMatrixWidth = 1;
-    InstMatrixHeight = 1;
-    size = (size_t)InstMatrixWidth * InstMatrixHeight;
+    inst_matrix_width = 1;
+    inst_matrix_height = 1;
+    size = (size_t)inst_matrix_width * inst_matrix_height;
     while (size < fv->font_code_count)
     {
+        int loop_count = (int)(fv->font_code_count / size);
+        if (loop_count < min_loop_count) break;
         if (match_width > match_height)
         {
-            int new_height = match_height + fv->output_h;
+            int new_height = match_height + fv->output_h * 2;
             if (new_height > max_tex_size) break;
             match_height = new_height;
-            InstMatrixHeight++;
+            inst_matrix_height++;
         }
         else
         {
-            int new_width = match_width + fv->output_w;
+            int new_width = match_width + fv->output_w * 2;
             if (new_width > max_tex_size) break;
             match_width = new_width;
-            InstMatrixWidth++;
+            inst_matrix_width++;
         }
-        size = (size_t)InstMatrixWidth * InstMatrixHeight;
+        size = (size_t)inst_matrix_width * inst_matrix_height;
     }
 
     gld->match_width = match_width;
@@ -538,13 +541,13 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
         "    ivec2 InstDim = Resolution / ConsoleSize;"
         "    ivec2 InstCoord = FragCoord / ConsoleSize;"
         "    ivec2 ConsoleCoord = FragCoord - (InstCoord * ConsoleSize);"
-        "    int InstCount = InstDim.x * InstDim.y;"
+        "    int inst_count = InstDim.x * InstDim.y;"
         "    int InstID = InstCoord.x + InstCoord.y * InstDim.x;"
         "    if (InstID >= FontMatrixCodeCount) discard;"
         "    int BestGlyph = 0;"
         "    float BestScore = -99999.0;"
         "    ivec2 GraphicalCoord = ConsoleCoord * GlyphSize;"
-        "    for(int i = 0; i < FontMatrixCodeCount; i += InstCount)"
+        "    for(int i = 0; i < FontMatrixCodeCount; i += inst_count)"
         "    {"
         "        int Glyph = (i + InstID);"
         "        if (Glyph >= FontMatrixCodeCount) break;"
@@ -582,10 +585,10 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
 
     if (output_init_info)
     {
-        int InstCount = InstMatrixWidth * InstMatrixHeight;
-        int LoopCount = (int)(fv->font_code_count / InstCount);
+        int inst_count = inst_matrix_width * inst_matrix_height;
+        int loop_count = (int)(fv->font_code_count / inst_count);
         fprintf(fv->log_fp, "OpenGL Renderer: match size: %d x %d.\n", match_width, match_height);
-        fprintf(fv->log_fp, "Expected loop count '%d' for total code count %zu (%d x %d = %d tests run in a pass).\n", LoopCount, fv->font_code_count, InstMatrixWidth, InstMatrixHeight, InstCount);
+        fprintf(fv->log_fp, "Expected loop count '%d' for total code count %zu (%d x %d = %d tests run in a pass).\n", loop_count, fv->font_code_count, inst_matrix_width, inst_matrix_height, inst_count);
     }
 
     gld->reduction_width = match_width;
@@ -3118,6 +3121,30 @@ int fv_show(fontvideo_p fv)
     return fv_render(fv);
 }
 
+static int do_output_job(fontvideo_p fv)
+{
+    if (!fv->frames) return 0;
+    if (!fv->rendered_frame_count) return 0;
+    return output_rendered_video(fv, rttimer_gettime(&fv->tmr));
+}
+
+static int do_render_job(fontvideo_p fv)
+{
+    if (!fv->frames) return 0;
+    if (fv->rendered_frame_count >= fv->precached_frame_count) return 0;
+    return get_frame_and_render(fv) ? 1 : 0;
+}
+
+static int do_decode_job(fontvideo_p fv, uint32_t max_precache_frame_count)
+{
+    if (fv->tailed) return 0;
+    if (!fv->real_time_play)
+    {
+        if (fv->precached_frame_count >= max_precache_frame_count) return 0;
+    }
+    return do_decode(fv, 1);
+}
+
 int fv_render(fontvideo_p fv)
 {
 #ifdef _OPENMP
@@ -3136,9 +3163,9 @@ int fv_render(fontvideo_p fv)
         for (;;)
         {
             if ( 0 ||
-                (fv->frames && fv->rendered_frame_count && !output_rendered_video(fv, rttimer_gettime(&fv->tmr))) ||
-                (fv->frames && fv->precached_frame_count > fv->rendered_frame_count && !get_frame_and_render(fv)) ||
-                ((fv->real_time_play ? 1 : (int)fv->precached_frame_count < thread_count * 2) && !fv->tailed && !do_decode(fv, 1)) ||
+                do_output_job(fv) ||
+                do_render_job(fv) ||
+                do_decode_job(fv, thread_count * 2) ||
                     0)
             {
                 continue;
@@ -3154,18 +3181,8 @@ int fv_render(fontvideo_p fv)
     {
         for (;;)
         {
-            while (!fv->tailed)
-            {
-                if (!do_decode(fv, 1)) break;
-            }
-            if (fv->precached_frame_count > fv->rendered_frame_count)
-            {
-                get_frame_and_render(fv);
-            }
-            if (fv->rendered_frame_count)
-            {
-                output_rendered_video(fv, rttimer_gettime(&fv->tmr));
-            }
+            while (do_decode_job(fv, 4));
+            if (do_render_job(fv)) do_output_job(fv);
             if (fv->tailed && !fv->frames) break;
         }
     }
