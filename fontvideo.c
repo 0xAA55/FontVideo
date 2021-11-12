@@ -729,7 +729,7 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
         "        {"
         "            ivec2 xy = ivec2(x, y);"
         "            vec2 Data = texelFetch(ReductionTex, (SrcInstCoord + xy) * ConsoleSize + ConsoleCoord, 0).rg;"
-        "            if (Data.x > BestScore)"
+        "            if (Data.x >= BestScore)"
         "            {"
         "                BestScore = Data.x;"
         "                BestGlyph = int(Data.y);"
@@ -838,15 +838,15 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
         "    if (SrcInvert != 0) AvrColor = vec3(1) - AvrColor;"
         "    Output = BestGlyph;"
         "    Color = 0;"
-        "    float ColorMinDist = 999999.9;"
+        "    float ColorMinScore = -999999.9;"
         "    for(int i = 0; i < 16; i++)"
         "    {"
         "        vec3 TV1 = normalize(AvrColor - vec3(0.5));"
         "        vec3 TV2 = normalize(Palette[i].bgr - vec3(0.5));"
-        "        float ColorDist = 1.0 - dot(TV1, TV2);"
-        "        if (ColorDist < ColorMinDist)"
+        "        float ColorScore = dot(TV1, TV2);"
+        "        if (ColorScore >= ColorMinScore)"
         "        {"
-        "            ColorMinDist = ColorDist;"
+        "            ColorMinScore = ColorScore;"
         "            Color = i;"
         "        }"
         "    }"
@@ -1788,7 +1788,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                 }
 
                 // Do vector normalize
-                if (score > best_score)
+                if (score >= best_score)
                 {
                     best_score = score;
                     best_code_index = cur_code_index;
@@ -1851,7 +1851,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                     avr_r * palette[i].rgb.r +
                     avr_g * palette[i].rgb.g +
                     avr_b * palette[i].rgb.b;
-                if (score > best_score)
+                if (score >= best_score)
                 {
                     best_score = score;
                     col = (uint8_t)i;
