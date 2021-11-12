@@ -25,7 +25,7 @@
 #include"utf.h"
 
 #ifdef _DEBUG
-// #   define DEBUG_OUTPUT_TO_SCREEN 1
+#   define DEBUG_OUTPUT_TO_SCREEN 1
 #endif
 
 #define DISCARD_FRAME_NUM_THRESHOLD 10
@@ -1524,7 +1524,7 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
         goto FailExit;
     }
 
-    fv->font_luminance_image = malloc(fv->font_code_count * font_pixel_count * sizeof fv->font_luminance_image[0]);
+    fv->font_luminance_image = calloc(fv->font_code_count * font_pixel_count, sizeof fv->font_luminance_image[0]);
     if (!fv->font_luminance_image)
     {
         fprintf(log_fp, "Could not calculate font glyph lum values: %s\n", strerror(errno));
@@ -1553,10 +1553,12 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
                     uint32_t u32;
                     float f32;
                 }   *font_pixel = (void *)&(row[srcx + x]);
-                float font_lum = sqrtf((float)(
-                    (uint32_t)font_pixel->u8[0] * font_pixel->u8[0] +
-                    (uint32_t)font_pixel->u8[1] * font_pixel->u8[1] +
-                    (uint32_t)font_pixel->u8[2] * font_pixel->u8[2])) / 441.672955930063709849498817084f;
+                float font_r, font_g, font_b;
+                float font_lum;
+                font_b = (float)font_pixel->u8[0] / 255.0f;
+                font_g = (float)font_pixel->u8[1] / 255.0f;
+                font_r = (float)font_pixel->u8[2] / 255.0f;
+                font_lum = sqrtf(font_r * font_r + font_g * font_g + font_b * font_b);
                 if (font_pixel->u32 != 0xff000000 && font_pixel->u32 != 0xffffffff)
                 {
                     fv->font_is_blackwhite = 0;
@@ -1643,9 +1645,54 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
 {
     int fy, fw, fh;
     uint32_t font_pixel_count = fv->font_w * fv->font_h;
+    int i;
+    union color
+    {
+        float f[3];
+        struct desc
+        {
+            float b, g, r;
+        }rgb;
+    }palette[16] =
+    {
+        {{0.0f, 0.0f, 0.0f}},
+        {{0.0f, 0.0f, 0.5f}},
+        {{0.0f, 0.5f, 0.0f}},
+        {{0.0f, 0.5f, 0.5f}},
+        {{0.5f, 0.0f, 0.0f}},
+        {{0.5f, 0.0f, 0.5f}},
+        {{0.5f, 0.5f, 0.0f}},
+        {{0.5f, 0.5f, 0.5f}},
+        {{0.3f, 0.3f, 0.3f}},
+        {{0.0f, 0.0f, 1.0f}},
+        {{0.0f, 1.0f, 0.0f}},
+        {{0.0f, 1.0f, 1.0f}},
+        {{1.0f, 0.0f, 0.0f}},
+        {{1.0f, 0.0f, 1.0f}},
+        {{1.0f, 1.0f, 0.0f}},
+        {{1.0f, 1.0f, 1.0f}}
+    };
 
     fw = f->w;
     fh = f->h;
+
+    for (i = 0; i < 16; i++)
+    {
+        float length;
+        palette[i].rgb.r -= 0.5f;
+        palette[i].rgb.g -= 0.5f;
+        palette[i].rgb.b -= 0.5f;
+        length = sqrtf(
+            palette[i].rgb.r * palette[i].rgb.r +
+            palette[i].rgb.g * palette[i].rgb.g +
+            palette[i].rgb.b * palette[i].rgb.b);
+        if (length >= 0.000001f)
+        {
+            palette[i].rgb.r /= length;
+            palette[i].rgb.g /= length;
+            palette[i].rgb.b /= length;
+        }
+    }
 
     // OpenMP will automatically disable recursive multi-threading
 #pragma omp parallel for
@@ -1660,12 +1707,11 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
         for (fx = 0; fx < fw; fx++)
         {
             int x, y;
-            uint32_t avr_r = 0, avr_g = 0, avr_b = 0;
+            float avr_r = 0, avr_g = 0, avr_b = 0;
             uint32_t cur_code_index = 0;
             uint32_t best_code_index = 0;
             float src_normalize = 0;
-            float best_score = -9999999.0f;
-            int bright = 0;
+            float best_score = -9999999.9f;
             uint8_t col = 0;
             sx = fx * fv->font_w;
 
@@ -1688,21 +1734,34 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                         uint8_t u8[4];
                         uint32_t u32;
                     }   *src_pixel = (void *)&(raw_row[sx + x]);
+                    float src_r, src_g, src_b;
                     float src_lum;
                     if (fv->do_color_invert)
                     {
                         src_pixel->u32 ^= 0xffffff;
                     }
-                    src_lum = sqrtf((float)(
-                        (uint32_t)src_pixel->u8[0] * src_pixel->u8[0] +
-                        (uint32_t)src_pixel->u8[1] * src_pixel->u8[1] +
-                        (uint32_t)src_pixel->u8[2] * src_pixel->u8[2])) / 441.672955930063709849498817084f;
+                    src_r = (float)src_pixel->u8[0] / 255.0f;
+                    src_g = (float)src_pixel->u8[1] / 255.0f;
+                    src_b = (float)src_pixel->u8[2] / 255.0f;
+                    src_lum = sqrtf(src_r * src_r + src_g * src_g + src_b * src_b);
                     src_lum -= 0.5f;
                     buf_row[x] = src_lum;
                     src_normalize += src_lum * src_lum;
                 }
             }
             src_normalize = sqrtf(src_normalize);
+            // Doing normalize
+            if (src_normalize >= 0.000001f)
+            {
+                for (y = 0; y < (int)fv->font_h; y++)
+                {
+                    float *buf_row = &src_lum_buffer[y * fv->font_w];
+                    for (x = 0; x < (int)fv->font_w; x++)
+                    {
+                        buf_row[x] /= src_normalize;
+                    }
+                }
+            }
 
             // Iterate the font matrix
             for (cur_code_index = 0; cur_code_index < fv->font_code_count; cur_code_index++)
@@ -1725,15 +1784,11 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                 }
 
                 // Do vector normalize
-                if (src_normalize >= 0.000001f) score /= src_normalize;
                 if (score > best_score)
                 {
                     best_score = score;
                     best_code_index = cur_code_index;
                 }
-
-                cur_code_index++;
-                if (cur_code_index >= fv->font_code_count) break;
             }
 
             // The best matching char code
@@ -1746,7 +1801,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                 uint32_t *raw_row = f->raw_data_row[sy + y];
 #ifdef DEBUG_OUTPUT_TO_SCREEN
                 size_t row_start = (size_t)y * fv->font_w;
-                float *font_row = &fv->font_luminance_image[best_code_index * font_pixel_count + row_start];
+                float *font_row = &fv->font_luminance_image[(size_t)best_code_index * font_pixel_count + row_start];
                 float *buf_row = &src_lum_buffer[y * fv->font_w];
 #endif
                 for (x = 0; x < (int)fv->font_w; x++)
@@ -1757,9 +1812,9 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                         uint32_t u32;
                     }   *src_pixel = (void *)&(raw_row[sx + x]);
 
-                    avr_b += src_pixel->u8[0];
-                    avr_g += src_pixel->u8[1];
-                    avr_r += src_pixel->u8[2];
+                    avr_b += (float)src_pixel->u8[0] / 255.0f;
+                    avr_g += (float)src_pixel->u8[1] / 255.0f;
+                    avr_r += (float)src_pixel->u8[2] / 255.0f;
 
 #ifdef DEBUG_OUTPUT_TO_SCREEN
                     if (1)
@@ -1773,18 +1828,31 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                 }
             }
 
-            avr_b /= font_pixel_count;
-            avr_g /= font_pixel_count;
-            avr_r /= font_pixel_count;
+            avr_b /= font_pixel_count; avr_b -= 0.5f;
+            avr_g /= font_pixel_count; avr_g -= 0.5f;
+            avr_r /= font_pixel_count; avr_r -= 0.5f;
+            src_normalize = sqrtf(avr_r * avr_r + avr_g * avr_g + avr_b * avr_b);
+            if (src_normalize >= 0.000001f)
+            {
+                avr_b /= src_normalize;
+                avr_g /= src_normalize;
+                avr_r /= src_normalize;
+            }
 
-            bright = (avr_r + avr_g + avr_b > 127 + 127 + 127);
-
-            // Encode the color into 3-bit BGR with 1-bit brightness
-            col =
-                ((avr_b & 0x80) >> 5) |
-                ((avr_g & 0x80) >> 6) |
-                ((avr_r & 0x80) >> 7) |
-                (bright ? 0x08 : 0x00);
+            best_score = -9999999.9f;
+            col = 0;
+            for (i = 0; i < 16; i++)
+            {
+                float score =
+                    avr_r * palette[i].rgb.r +
+                    avr_g * palette[i].rgb.g +
+                    avr_b * palette[i].rgb.b;
+                if (score > best_score)
+                {
+                    best_score = score;
+                    col = (uint8_t)i;
+                }
+            }
 
             // Avoid generating pure black characters.
             if (!col) col = 0x08;
@@ -2112,7 +2180,6 @@ static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
     opengl_renderer_p r = NULL;
     glctx_p ctx = NULL;
     size_t i;
-    int bo = 0;
 
     r = fv->opengl_renderer;
     while (!ctx)
@@ -2157,7 +2224,11 @@ static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
             do_cpu_render(fv, f);
             return;
         }
-        if (!ctx) backoff(&bo);
+        if (!ctx)
+        {
+            do_cpu_render(fv, f);
+            return;
+        }
     }
 }
 
@@ -2209,9 +2280,8 @@ static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
 #ifdef FONTVIDEO_ALLOW_OPENGL
     if (fv->allow_opengl && fv->opengl_renderer)
     {
-        do_gpu_render(fv, f);
-        // if (fv->real_time_play) do_gpu_render(fv, f);
-        // else do_gpu_or_cpu_render(fv, f);
+        if (fv->real_time_play) do_gpu_render(fv, f);
+        else do_gpu_or_cpu_render(fv, f);
     }
     else
 #endif
