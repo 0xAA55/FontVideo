@@ -30,9 +30,9 @@
 
 #define DISCARD_FRAME_NUM_THRESHOLD 10
 
-static int get_thread_id()
+static uint32_t get_thread_id()
 {
-    return thrd_current();
+    return (uint32_t)thrd_current();
 }
 
 #ifdef _WIN32
@@ -315,11 +315,48 @@ typedef struct opengl_data_struct
     int output_info;
 }opengl_data_t, *opengl_data_p;
 
+static int output_shader_infolog(GLuint shader, const char *shader_type, FILE *compiler_output)
+{
+    GLint log_length;
+    glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &log_length);
+    if (log_length)
+    {
+        char *log_info = calloc((size_t)log_length + 1, 1);
+        if (log_info)
+        {
+            glGetInfoLogARB(shader, log_length, &log_length, log_info);
+            fprintf(compiler_output, "Shader (%s) InfoLog: %s\n", shader_type, log_info);
+            free(log_info);
+            return 1;
+        }
+        return 0;
+    }
+    return 1;
+}
+
+static int output_program_infolog(GLuint program, FILE *compiler_output)
+{
+    GLint log_length;
+    glGetProgramiv(program, GL_INFO_LOG_LENGTH, &log_length);
+    if (log_length)
+    {
+        char *log_info = calloc((size_t)log_length + 1, 1);
+        if (log_info)
+        {
+            glGetInfoLogARB(program, log_length, &log_length, log_info);
+            fprintf(compiler_output, "Program InfoLog: %s\n", log_info);
+            free(log_info);
+            return 1;
+        }
+        return 0;
+    }
+    return 1;
+}
+
 static GLuint create_shader_program(FILE *compiler_output, const char *vs_code, const char *gs_code, const char *fs_code)
 {
     GLuint program = glCreateProgram();
     GLint success = 0;
-    GLint log_length;
 
     if (vs_code)
     {
@@ -330,6 +367,7 @@ static GLuint create_shader_program(FILE *compiler_output, const char *vs_code, 
         vs = glCreateShader(GL_VERTEX_SHADER);
         glShaderSource(vs, 1, codes, lengths);
         glCompileShader(vs);
+        output_shader_infolog(vs, "VS", compiler_output);
         glAttachShader(program, vs);
         glDeleteShader(vs);
     }
@@ -343,6 +381,7 @@ static GLuint create_shader_program(FILE *compiler_output, const char *vs_code, 
         gs = glCreateShader(GL_GEOMETRY_SHADER);
         glShaderSource(gs, 1, codes, lengths);
         glCompileShader(gs);
+        output_shader_infolog(gs, "GS", compiler_output);
         glAttachShader(program, gs);
         glDeleteShader(gs);
     }
@@ -356,24 +395,14 @@ static GLuint create_shader_program(FILE *compiler_output, const char *vs_code, 
         fs = glCreateShader(GL_FRAGMENT_SHADER);
         glShaderSource(fs, 1, codes, lengths);
         glCompileShader(fs);
+        output_shader_infolog(fs, "FS", compiler_output);
         glAttachShader(program, fs);
         glDeleteShader(fs);
     }
 
     glLinkProgram(program);
     
-    glGetProgramiv(program, GL_INFO_LOG_LENGTH, &log_length);
-    if (log_length)
-    {
-        char *log_info = calloc((size_t)log_length + 1, 1);
-        if (log_info)
-        {
-            glGetInfoLogARB(program, log_length, &log_length, log_info);
-            fputs(log_info, compiler_output);
-            free(log_info);
-            fputs("\n", compiler_output);
-        }
-    }
+    output_program_infolog(program, compiler_output);
 
     glGetObjectParameterivARB(program, GL_LINK_STATUS, &success);
     if (!success) goto FailExit;
@@ -449,6 +478,7 @@ static const char *strOpenGLError(GLenum glerr)
     }
 }
 
+#define OPENGL_ERROR_ASSERT() {err_code = glGetError(); if (err_code != GL_NO_ERROR) {err_line = __LINE__; goto OpenGLErrorExit; }}
 static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
 {
     opengl_data_p gld = calloc(1, sizeof gld[0]);
@@ -459,19 +489,17 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
     GLint match_width = 0;
     GLint match_height = 0;
     GLint max_tex_size;
-    GLint max_fbo_width;
-    GLint max_fbo_height;
+    GLint max_renderbuffer_size;
     GLint Location;
     GLenum err_code = GL_NO_ERROR;
     int inst_matrix_width;
     int inst_matrix_height;
+    int err_line = __LINE__;
     const int min_loop_count = 5;
     struct Quad_Vertex_Struct
     {
         float PosX;
         float PosY;
-        float TexU;
-        float TexV;
     }*Quad_Vertex = NULL;
 
     if (!gld) goto NoMemFailExit;
@@ -489,6 +517,7 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
         fprintf(fv->log_fp, "OpenGL 3.0 not supported, the minimum requirement not meet.\n");
         goto FailExit;
     }
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
     glGenFramebuffers(1, &gld->FBO_match);
     glGenFramebuffers(1, &gld->FBO_reduction);
@@ -505,18 +534,15 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, gld->src_width, gld->src_height, 0, GL_BGRA, GL_UNSIGNED_BYTE, 0);
-    glBindTexture(GL_TEXTURE_2D, 0);
 
     glGenBuffers(1, &gld->PBO_src);
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, gld->PBO_src);
     glBufferData(GL_PIXEL_UNPACK_BUFFER, size, NULL, GL_STATIC_DRAW);
 
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_tex_size);
-    assert(max_tex_size >= 1024);
-    glGetIntegerv(GL_MAX_FRAMEBUFFER_WIDTH, &max_fbo_width);
-    glGetIntegerv(GL_MAX_FRAMEBUFFER_HEIGHT, &max_fbo_height);
-    if (max_tex_size > max_fbo_width) max_tex_size = max_fbo_width;
-    if (max_tex_size > max_fbo_height) max_tex_size = max_fbo_height;
+    assert(max_tex_size >= 1024); OPENGL_ERROR_ASSERT();
+    glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &max_renderbuffer_size);
+    if (max_tex_size > max_renderbuffer_size) max_tex_size = max_renderbuffer_size;
 
     size = (size_t)fv->font_matrix->Width * fv->font_matrix->Height * 4;
 
@@ -534,7 +560,6 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, fv->font_matrix->Width, fv->font_matrix->Height, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
-    glBindTexture(GL_TEXTURE_2D, 0);
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
     glDeleteBuffers(1, &pbo_font_matrix);
 
@@ -574,23 +599,19 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RG32F, gld->match_width, gld->match_height, 0, GL_RG, GL_FLOAT, 0);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    OPENGL_ERROR_ASSERT();
 
     gld->match_shader = create_shader_program(fv->log_fp,
         "#version 130\n"
         "in vec2 vPosition;"
-        "in vec2 vTexCoord;"
-        "out vec2 TexCoord;"
         "void main()"
         "{"
-        "   TexCoord = vTexCoord;"
         "   gl_Position = vec4(vPosition, 0.0, 1.0);"
         "}"
         ,
         NULL,
         "#version 130\n"
         "precision highp float;"
-        "in vec2 TexCoord;"
         "out vec2 Output;"
         "uniform ivec2 Resolution;"
         "uniform sampler2D FontMatrix;"
@@ -602,7 +623,7 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
         "uniform int SrcInvert;"
         "void main()"
         "{"
-        "    ivec2 FragCoord = ivec2(TexCoord * vec2(Resolution));"
+        "    ivec2 FragCoord = ivec2(gl_FragCoord.xy);"
         "    ivec2 InstDim = Resolution / ConsoleSize;"
         "    ivec2 InstCoord = FragCoord / ConsoleSize;"
         "    ivec2 ConsoleCoord = FragCoord - (InstCoord * ConsoleSize);"
@@ -647,6 +668,7 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
         "}"
     );
     if (!gld->match_shader) goto FailExit;
+    OPENGL_ERROR_ASSERT();
 
     if (output_init_info)
     {
@@ -666,7 +688,7 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RG32F, gld->reduction_width, gld->reduction_height, 0, GL_RG, GL_FLOAT, 0);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    OPENGL_ERROR_ASSERT();
 
     glGenTextures(1, &gld->reduction_texture2);
     glBindTexture(GL_TEXTURE_2D, gld->reduction_texture2);
@@ -675,23 +697,19 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RG32F, gld->reduction_width, gld->reduction_height, 0, GL_RG, GL_FLOAT, 0);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    OPENGL_ERROR_ASSERT();
 
     gld->reduction_shader = create_shader_program(fv->log_fp,
         "#version 130\n"
         "in vec2 vPosition;"
-        "in vec2 vTexCoord;"
-        "out vec2 TexCoord;"
         "void main()"
         "{"
-        "   TexCoord = vTexCoord;"
         "   gl_Position = vec4(vPosition, 0.0, 1.0);"
         "}"
         ,
         NULL,
         "#version 130\n"
         "precision highp float;"
-        "in vec2 TexCoord;"
         "out vec2 Output;"
         "uniform ivec2 Resolution;"
         "uniform ivec2 ConsoleSize;"
@@ -699,7 +717,7 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
         "uniform ivec2 ReductionSize;"
         "void main()"
         "{"
-        "    ivec2 FragCoord = ivec2(TexCoord * vec2(Resolution));"
+        "    ivec2 FragCoord = ivec2(gl_FragCoord.xy);"
         "    ivec2 InstCoord = FragCoord / ConsoleSize;"
         "    ivec2 ConsoleCoord = FragCoord - (InstCoord * ConsoleSize);"
         "    ivec2 SrcInstCoord = InstCoord * ReductionSize;"
@@ -723,6 +741,7 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
         "}"
     );
     if (!gld->reduction_shader) goto FailExit;
+    OPENGL_ERROR_ASSERT();
 
     gld->final_width = fv->output_w;
     gld->final_height = fv->output_h;
@@ -735,7 +754,7 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_R32I, gld->final_width, gld->final_height, 0, GL_RED_INTEGER, GL_INT, 0);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    OPENGL_ERROR_ASSERT();
 
     glGenTextures(1, &gld->final_texture_c);
     glBindTexture(GL_TEXTURE_2D, gld->final_texture_c);
@@ -744,33 +763,33 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_R8I, gld->final_width, gld->final_height, 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, 0);
+    OPENGL_ERROR_ASSERT();
+
     glBindTexture(GL_TEXTURE_2D, 0);
 
     glGenBuffers(1, &gld->PBO_final);
     glBindBuffer(GL_PIXEL_PACK_BUFFER, gld->PBO_final);
     glBufferData(GL_PIXEL_PACK_BUFFER, size * 4, NULL, GL_STATIC_DRAW);
+    OPENGL_ERROR_ASSERT();
 
     glGenBuffers(1, &gld->PBO_final_c);
     glBindBuffer(GL_PIXEL_PACK_BUFFER, gld->PBO_final_c);
     glBufferData(GL_PIXEL_PACK_BUFFER, size, NULL, GL_STATIC_DRAW);
+    OPENGL_ERROR_ASSERT();
 
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 
     gld->final_shader = create_shader_program(fv->log_fp,
         "#version 130\n"
         "in vec2 vPosition;"
-        "in vec2 vTexCoord;"
-        "out vec2 TexCoord;"
         "void main()"
         "{"
-        "   TexCoord = vTexCoord;"
         "   gl_Position = vec4(vPosition, 0.0, 1.0);"
         "}"
         ,
         NULL,
         "#version 130\n"
         "precision highp float;"
-        "in vec2 TexCoord;"
         "out int Output;"
         "out int Color;"
         "uniform ivec2 Resolution;"
@@ -779,8 +798,8 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
         "uniform ivec2 ConsoleSize;"
         "uniform sampler2D SrcColor;"
         "uniform int SrcInvert;"
-        "uniform vec3 Palette[16] ="
-        "{"
+        "uniform vec3 Palette[16] = vec3[16]"
+        "("
         "    vec3(0.0, 0.0, 0.0),"
         "    vec3(0.0, 0.0, 0.5),"
         "    vec3(0.0, 0.5, 0.0),"
@@ -797,10 +816,10 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
         "    vec3(1.0, 0.0, 1.0),"
         "    vec3(1.0, 1.0, 0.0),"
         "    vec3(1.0, 1.0, 1.0)"
-        "};"
+        ");"
         "void main()"
         "{"
-        "    ivec2 FragCoord = ivec2(TexCoord * vec2(Resolution));"
+        "    ivec2 FragCoord = ivec2(gl_FragCoord.xy);"
         "    vec2 Data = texelFetch(ReductionTex, FragCoord, 0).rg;"
         "    float BestScore = Data.x;"
         "    int BestGlyph = int(Data.y);"
@@ -835,6 +854,7 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
         "}"
     );
     if (!gld->final_shader) goto FailExit;
+    OPENGL_ERROR_ASSERT();
 
     glGenVertexArrays(1, &gld->Quad_VAO);
     glBindVertexArray(gld->Quad_VAO);
@@ -849,49 +869,41 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
     Quad_Vertex[1].PosX = 1; Quad_Vertex[1].PosY = -1;
     Quad_Vertex[2].PosX = -1; Quad_Vertex[2].PosY = 1;
     Quad_Vertex[3].PosX = 1; Quad_Vertex[3].PosY = 1;
-    Quad_Vertex[0].TexU = 0; Quad_Vertex[0].TexV = 0;
-    Quad_Vertex[1].TexU = 1; Quad_Vertex[1].TexV = 0;
-    Quad_Vertex[2].TexU = 0; Quad_Vertex[2].TexV = 1;
-    Quad_Vertex[3].TexU = 1; Quad_Vertex[3].TexV = 1;
     glUnmapBuffer(GL_ARRAY_BUFFER);
+    OPENGL_ERROR_ASSERT();
 
-    Location = glGetAttribLocation(gld->match_shader, "vPosition"); // assert(Location >= 0);
-    glEnableVertexAttribArray(Location);
-    glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], (void *)0);
+    Location = glGetAttribLocation(gld->match_shader, "vPosition");
+    if (Location >= 0)
+    {
+        glEnableVertexAttribArray(Location);
+        glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], (void *)0);
+    }
 
-    Location = glGetAttribLocation(gld->match_shader, "vTexCoord"); // assert(Location >= 0);
-    glEnableVertexAttribArray(Location);
-    glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], (void *)8);
+    Location = glGetAttribLocation(gld->reduction_shader, "vPosition");
+    if (Location >= 0)
+    {
+        glEnableVertexAttribArray(Location);
+        glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], (void *)0);
+    }
 
-    Location = glGetAttribLocation(gld->reduction_shader, "vPosition"); // assert(Location >= 0);
-    glEnableVertexAttribArray(Location);
-    glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], (void *)0);
-
-    Location = glGetAttribLocation(gld->reduction_shader, "vTexCoord"); // assert(Location >= 0);
-    glEnableVertexAttribArray(Location);
-    glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], (void *)8);
-
-    Location = glGetAttribLocation(gld->final_shader, "vPosition"); // assert(Location >= 0);
-    glEnableVertexAttribArray(Location);
-    glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], (void *)0);
-
-    Location = glGetAttribLocation(gld->final_shader, "vTexCoord"); // assert(Location >= 0);
-    glEnableVertexAttribArray(Location);
-    glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], (void *)8);
+    Location = glGetAttribLocation(gld->final_shader, "vPosition");
+    if (Location >= 0)
+    {
+        glEnableVertexAttribArray(Location);
+        glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], (void *)0);
+    }
 
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
 
     glUseProgram(0);
-
-    err_code = glGetError();
-    if (err_code != GL_NO_ERROR) goto OpenGLErrorExit;
+    OPENGL_ERROR_ASSERT();
 
     return gld;
 OpenGLErrorExit:
     do
     {
-        fprintf(fv->log_fp, "OpenGL Renderer: OpenGL error occured: %u (%s).\n", err_code, strOpenGLError(err_code));
+        fprintf(fv->log_fp, "OpenGL Renderer: OpenGL error occured (from line %d): %u (%s).\n", err_line, err_code, strOpenGLError(err_code));
         err_code = glGetError();
     } while (err_code != GL_NO_ERROR);
     goto FailExit;
@@ -899,7 +911,6 @@ NoMemFailExit:
     fprintf(fv->log_fp, "OpenGL Renderer: Could not initialize OpenGL data: %s.\n", strerror(errno));
     goto FailExit;
 FailExit:
-    free(Quad_Vertex);
     opengl_data_destroy(gld);
     return NULL;
 }
@@ -974,8 +985,8 @@ FailExit:
 static void glctx_MakeCurrent(glctx_p ctx)
 {
     fontvideo_p fv = ctx->fv;
-    atomic_int readout = 0;
-    int cur_id = get_thread_id();
+    uint32_t readout = 0;
+    uint32_t cur_id = get_thread_id();
     int bo = 0;
     while ((readout = atomic_exchange(&ctx->lock, cur_id)) != 0)
     {
@@ -1003,8 +1014,8 @@ static int glctx_IsAvailableNow(glctx_p ctx)
 static int glctx_TryMakeCurrent(glctx_p ctx)
 {
     fontvideo_p fv = ctx->fv;
-    int expected = 0;
-    int cur_id = get_thread_id();
+    uint32_t expected = 0;
+    uint32_t cur_id = get_thread_id();
     if (!glctx_IsAvailableNow(ctx)) return 0;
     if (atomic_compare_exchange_strong(&ctx->lock, &expected, cur_id))
     {
@@ -1104,7 +1115,7 @@ static opengl_renderer_p opengl_renderer_create(fontvideo_p fv, int opengl_threa
     }
     else
     {
-        fprintf(fv->log_fp, "OpenGL Renderer: Working thread number: %d.\n", opengl_threads);
+        fprintf(fv->log_fp, "OpenGL Renderer: Working thread number: %d.\n", ctx_count);
     }
 
     return r;
@@ -1139,8 +1150,8 @@ int fv_allow_opengl(fontvideo_p fv, int opengl_threads)
 // For locking the frames link list of `fv->frames` and `fv->frame_last`, not for locking every individual frames
 static void lock_frame(fontvideo_p fv)
 {
-    int readout = 0;
-    int cur_id = get_thread_id();
+    uint32_t readout = 0;
+    uint32_t cur_id = get_thread_id();
     int bo = 0;
     while (
         // First, do a non-atomic test for a quick peek.
@@ -1166,8 +1177,8 @@ static void unlock_frame(fontvideo_p fv)
 // Same mechanism for locking audio link list.
 static void lock_audio(fontvideo_p fv)
 {
-    atomic_int readout;
-    atomic_int cur_id = get_thread_id();
+    uint32_t readout;
+    uint32_t cur_id = get_thread_id();
     int bo = 0;
     while ((readout = atomic_exchange(&fv->audio_lock, cur_id)) != 0)
     {
@@ -1857,7 +1868,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
     }
     if (fv->verbose)
     {
-        fprintf(fv->log_fp, "Finished CPU rendering a frame. (%d)\n", get_thread_id());
+        fprintf(fv->log_fp, "Finished CPU rendering a frame. (%u)\n", get_thread_id());
     }
 }
 
@@ -1884,14 +1895,16 @@ static int do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_
     int reduction_dst_height;
     int reduction_pass = 0;
     int retval = 1;
+    int err_line = __LINE__;
 
     if (fv->verbose)
     {
-        fprintf(fv->log_fp, "Start GPU rendering a frame. (%d)\n", get_thread_id());
+        fprintf(fv->log_fp, "Start GPU rendering a frame. (%u)\n", get_thread_id());
     }
 
     // First step: issuing a rough matching with massive instances and a small number of glyphs to match.
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO_match);
+    OPENGL_ERROR_ASSERT();
 
     size = (size_t)f->raw_w * f->raw_h * 4;
 
@@ -1913,37 +1926,45 @@ static int do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_
     glBindFragDataLocation(gld->match_shader, 0, "Output");
 
     if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) goto FBONotCompleteExit;
+    OPENGL_ERROR_ASSERT();
 
     glUseProgram(gld->match_shader);
 
-    Location = glGetUniformLocation(gld->match_shader, "Resolution"); // assert(Location >= 0);
-    glUniform2i(Location, gld->match_width, gld->match_height);
+    Location = glGetUniformLocation(gld->match_shader, "Resolution");
+    if (Location >= 0) glUniform2i(Location, gld->match_width, gld->match_height);
 
-    Location = glGetUniformLocation(gld->match_shader, "FontMatrix"); // assert(Location >= 0);
-    glActiveTexture(GL_TEXTURE0 + 0); glBindTexture(GL_TEXTURE_2D, gld->font_matrix_texture);
-    glUniform1i(Location, 0);
+    Location = glGetUniformLocation(gld->match_shader, "FontMatrix");
+    if (Location >= 0)
+    {
+        glActiveTexture(GL_TEXTURE0 + 0); glBindTexture(GL_TEXTURE_2D, gld->font_matrix_texture);
+        glUniform1i(Location, 0);
+    }
 
-    Location = glGetUniformLocation(gld->match_shader, "FontMatrixCodeCount"); // assert(Location >= 0);
-    glUniform1i(Location, (GLint)fv->font_code_count);
+    Location = glGetUniformLocation(gld->match_shader, "FontMatrixCodeCount");
+    if (Location >= 0) glUniform1i(Location, (GLint)fv->font_code_count);
 
-    Location = glGetUniformLocation(gld->match_shader, "FontMatrixSize"); // assert(Location >= 0);
-    glUniform2i(Location, fv->font_mat_w, fv->font_mat_h);
+    Location = glGetUniformLocation(gld->match_shader, "FontMatrixSize");
+    if (Location >= 0) glUniform2i(Location, fv->font_mat_w, fv->font_mat_h);
 
-    Location = glGetUniformLocation(gld->match_shader, "GlyphSize"); // assert(Location >= 0);
-    glUniform2i(Location, fv->font_w, fv->font_h);
+    Location = glGetUniformLocation(gld->match_shader, "GlyphSize");
+    if (Location >= 0) glUniform2i(Location, fv->font_w, fv->font_h);
 
-    Location = glGetUniformLocation(gld->match_shader, "ConsoleSize"); // assert(Location >= 0);
-    glUniform2i(Location, fv->output_w, fv->output_h);
+    Location = glGetUniformLocation(gld->match_shader, "ConsoleSize");
+    if (Location >= 0) glUniform2i(Location, fv->output_w, fv->output_h);
 
-    Location = glGetUniformLocation(gld->match_shader, "SrcColor"); // assert(Location >= 0);
-    glActiveTexture(GL_TEXTURE0 + 1); glBindTexture(GL_TEXTURE_2D, gld->src_texture);
-    glUniform1i(Location, 1);
+    Location = glGetUniformLocation(gld->match_shader, "SrcColor");
+    if (Location >= 0)
+    {
+        glActiveTexture(GL_TEXTURE0 + 1); glBindTexture(GL_TEXTURE_2D, gld->src_texture);
+        glUniform1i(Location, 1);
+    }
 
-    Location = glGetUniformLocation(gld->match_shader, "SrcInvert"); // assert(Location >= 0);
-    glUniform1i(Location, fv->do_color_invert);
+    Location = glGetUniformLocation(gld->match_shader, "SrcInvert");
+    if (Location >= 0) glUniform1i(Location, fv->do_color_invert);
 
     glBindVertexArray(gld->Quad_VAO);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    OPENGL_ERROR_ASSERT();
 
     // Second step: merge instances for filtering the highest scores.
     reduction_tex1 = match_texture;
@@ -2051,6 +2072,7 @@ static int do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_
 
         glBindVertexArray(gld->Quad_VAO);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        OPENGL_ERROR_ASSERT();
 
         reduction_src_width = reduction_dst_width;
         reduction_src_height = reduction_dst_height;
@@ -2082,25 +2104,31 @@ static int do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_
 
     glUseProgram(gld->final_shader);
 
-    Location = glGetUniformLocation(gld->final_shader, "Resolution"); // assert(Location >= 0);
-    glUniform2i(Location, gld->final_width, gld->final_height);
+    Location = glGetUniformLocation(gld->final_shader, "Resolution");
+    if (Location >= 0) glUniform2i(Location, gld->final_width, gld->final_height);
 
-    Location = glGetUniformLocation(gld->final_shader, "ReductionTex"); // assert(Location >= 0);
-    glActiveTexture(GL_TEXTURE0 + 2); glBindTexture(GL_TEXTURE_2D, reduction_tex1);
-    glUniform1i(Location, 2);
+    Location = glGetUniformLocation(gld->final_shader, "ReductionTex");
+    if (Location >= 0)
+    {
+        glActiveTexture(GL_TEXTURE0 + 2); glBindTexture(GL_TEXTURE_2D, reduction_tex1);
+        glUniform1i(Location, 2);
+    }
 
-    Location = glGetUniformLocation(gld->final_shader, "GlyphSize"); // assert(Location >= 0);
-    glUniform2i(Location, fv->font_w, fv->font_h);
+    Location = glGetUniformLocation(gld->final_shader, "GlyphSize");
+    if (Location >= 0) glUniform2i(Location, fv->font_w, fv->font_h);
 
-    Location = glGetUniformLocation(gld->final_shader, "ConsoleSize"); // assert(Location >= 0);
-    glUniform2i(Location, fv->output_w, fv->output_h);
+    Location = glGetUniformLocation(gld->final_shader, "ConsoleSize");
+    if (Location >= 0) glUniform2i(Location, fv->output_w, fv->output_h);
 
-    Location = glGetUniformLocation(gld->final_shader, "SrcColor"); // assert(Location >= 0);
-    glActiveTexture(GL_TEXTURE0 + 1); glBindTexture(GL_TEXTURE_2D, gld->src_texture);
-    glUniform1i(Location, 1);
+    Location = glGetUniformLocation(gld->final_shader, "SrcColor");
+    if (Location >= 0)
+    {
+        glActiveTexture(GL_TEXTURE0 + 1); glBindTexture(GL_TEXTURE_2D, gld->src_texture);
+        glUniform1i(Location, 1);
+    }
 
-    Location = glGetUniformLocation(gld->final_shader, "SrcInvert"); // assert(Location >= 0);
-    glUniform1i(Location, fv->do_color_invert);
+    Location = glGetUniformLocation(gld->final_shader, "SrcInvert");
+    if (Location >= 0) glUniform1i(Location, fv->do_color_invert);
 
     glBindVertexArray(gld->Quad_VAO);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -2111,9 +2139,12 @@ static int do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_
     size = (size_t)gld->final_width * gld->final_height * 4;
     glBindBuffer(GL_PIXEL_PACK_BUFFER, gld->PBO_final);
     glGetTexImage(GL_TEXTURE_2D, 0, GL_RED_INTEGER, GL_INT, NULL);
+    OPENGL_ERROR_ASSERT();
+
     MapPtr = glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
     memcpy(f->data, MapPtr, size);
     glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+    OPENGL_ERROR_ASSERT();
 
     size = (size_t)gld->final_width * gld->final_height;
     retval = 0;
@@ -2138,27 +2169,31 @@ static int do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_
     glBindTexture(GL_TEXTURE_2D, final_texture_c);
     size = (size_t)gld->final_width * gld->final_height;
     glBindBuffer(GL_PIXEL_PACK_BUFFER, gld->PBO_final_c);
+    OPENGL_ERROR_ASSERT();
     glGetTexImage(GL_TEXTURE_2D, 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, NULL);
+    OPENGL_ERROR_ASSERT();
+
     MapPtr = glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
     memcpy(f->c_data, MapPtr, size);
     glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    OPENGL_ERROR_ASSERT();
 
-    err_code = glGetError();
-    while (err_code != GL_NO_ERROR)
-    {
-        fprintf(fv->log_fp, "OpenGL Renderer (%d): Failed to GPU rendering a frame: %u (%s)\n", get_thread_id(), err_code, strOpenGLError(err_code));
-        retval = 0;
-        err_code = glGetError();
-    }
     if (!retval) goto FailExit;
 
     if (fv->verbose)
     {
-        fprintf(fv->log_fp, "Finished GPU rendering a frame. (%d)\n", get_thread_id());
+        fprintf(fv->log_fp, "Finished GPU rendering a frame. (%u)\n", get_thread_id());
     }
 
     return retval;
+OpenGLErrorExit:
+    do
+    {
+        fprintf(fv->log_fp, "OpenGL Renderer: OpenGL error occured (from line %d): %u (%s).\n", err_line, err_code, strOpenGLError(err_code));
+        err_code = glGetError();
+    } while (err_code != GL_NO_ERROR);
+    goto FailExit;
 BlackScreenFailExit:
     fprintf(fv->log_fp, "OpenGL Renderer: Black screen output detected, this should be an OpenGL error.\n");
     goto FailExit;
@@ -2533,7 +2568,7 @@ static int get_frame_and_render(fontvideo_p fv)
             {
                 if (fv->verbose)
                 {
-                    fprintf(fv->log_fp, "Got frame to render. (%d)\n", get_thread_id());
+                    fprintf(fv->log_fp, "Got frame to render. (%u)\n", get_thread_id());
                 }
                 unlock_frame(fv);
                 render_frame_from_rgbabitmap(fv, f);
@@ -2823,7 +2858,7 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                     {
                         if (fv->verbose)
                         {
-                            fprintf(fv->log_fp, "Discarding rendered frame %u due to lag. (%d)\n", cur->index, get_thread_id());
+                            fprintf(fv->log_fp, "Discarding rendered frame %u due to lag. (%u)\n", cur->index, get_thread_id());
                         }
 
                         if (fv->frames == cur)
@@ -2847,7 +2882,7 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                         // Acquire it to prevent it from being rendered
                         if (atomic_compare_exchange_strong(&cur->rendering, &expected, get_thread_id()))
                         {
-                            fprintf(fv->log_fp, "Discarding frame %u to render due to lag. (%d)\n", cur->index, get_thread_id());
+                            fprintf(fv->log_fp, "Discarding frame %u to render due to lag. (%u)\n", cur->index, get_thread_id());
 
                             if (fv->frames == cur)
                             {
@@ -3051,7 +3086,7 @@ static int decode_frames(fontvideo_p fv, int max_precache_frame_count)
         double target_timestamp = rttimer_gettime(&fv->tmr) + fv->precache_seconds;
         if (fv->verbose)
         {
-            fprintf(fv->log_fp, "Decoding frames. (%d)\n", get_thread_id());
+            fprintf(fv->log_fp, "Decoding frames. (%u)\n", get_thread_id());
         }
         if (fv->real_time_play)
         {
@@ -3080,7 +3115,7 @@ static int decode_frames(fontvideo_p fv, int max_precache_frame_count)
     atomic_exchange(&fv->doing_decoding, 0);
     if (fv->tailed && fv->verbose)
     {
-        fprintf(fv->log_fp, "All frames decoded. (%d)\n", get_thread_id());
+        fprintf(fv->log_fp, "All frames decoded. (%u)\n", get_thread_id());
     }
     return ret;
 }
