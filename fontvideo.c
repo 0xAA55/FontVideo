@@ -160,7 +160,7 @@ static int yield()
     return SwitchToThread();
 }
 
-static void relax_sleep(int milliseconds)
+static void relax_sleep(uint64_t milliseconds)
 {
     Sleep((DWORD)milliseconds);
 }
@@ -174,6 +174,10 @@ static void relax_sleep(int milliseconds)
 #endif
 
 #include <sched.h>
+
+#ifndef __GNUC__
+#define __asm__ asm
+#endif
 
 #define SUBDIR "/"
 
@@ -216,7 +220,7 @@ static void set_console_color(fontvideo_p fv, int clr)
 
 static void cpu_relax()
 {
-    asm volatile ("pause" ::: "memory");
+    __asm__ volatile ("pause" ::: "memory");
 }
 
 static int yield()
@@ -224,15 +228,20 @@ static int yield()
     return sched_yield();
 }
 
-static void relax_sleep(int milliseconds)
+static void relax_sleep(uint64_t milliseconds)
 {
-    if (milliseconds >= 1000)
+    struct timespec req, rem;
+    req.tv_sec = milliseconds / 1000;
+    req.tv_nsec = (milliseconds % 1000) * 1000000;
+    while(nanosleep(&req, &rem))
     {
-        sleep(milliseconds / 1000);
-        milliseconds %= 1000;
-        if (!milliseconds) return;
+        switch (errno)
+        {
+        default:
+        case EFAULT: return;
+        case EINTR: break;
+        }
     }
-    usleep((useconds_t)milliseconds * 1000);
 }
 #endif
 
@@ -257,6 +266,7 @@ static void backoff(int *iter_counter)
     {
         int random;
         int sleep_ms = 1 << (iter_counter[0] - max_iter - max_yield);
+        if (iter_counter[0] < 0x7fffffff) iter_counter[0] ++;
 #pragma omp critical
         random = rand();
         if (sleep_ms > max_sleep_ms) sleep_ms = max_sleep_ms;
