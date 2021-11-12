@@ -1715,13 +1715,6 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             uint8_t col = 0;
             sx = fx * fv->font_w;
 
-            // Replace the rightmost char to newline
-            if (fx == fw - 1)
-            {
-                row[fx] = '\n';
-                continue;
-            }
-
             // Compute source luminance for further use
             for (y = 0; y < (int)fv->font_h; y++)
             {
