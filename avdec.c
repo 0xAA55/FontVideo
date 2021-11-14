@@ -6,6 +6,7 @@
 
 #include<libavutil/imgutils.h>
 #include<libavutil/opt.h>
+#include<libavutil/error.h>
 
 static void get_video_format(AVCodecContext *ctx, avdec_video_format_p vf)
 {
@@ -26,6 +27,8 @@ avdec_p avdec_open(char *path, FILE *log_fp)
 {
 	avdec_p av = NULL;
 	uint32_t i;
+    int ret;
+    char buf[1024];
 
 	av = malloc(sizeof av[0xAA55]);
 	if (!av) return av;
@@ -34,15 +37,17 @@ avdec_p avdec_open(char *path, FILE *log_fp)
     if (!log_fp) log_fp = stderr;
     av->log_fp = log_fp;
 
-    if (avformat_open_input(&av->format_context, path, NULL, NULL))
+    if ((ret = avformat_open_input(&av->format_context, path, NULL, NULL)) != 0)
     {
-        fprintf(log_fp, "Input file '%s': avformat_open_input() failed.\n", path);
+        av_strerror(ret, buf, sizeof buf);
+        fprintf(log_fp, "Input file '%s': avformat_open_input() failed: %s.\n", path, buf);
         goto FailExit;
     }
 
-    if (avformat_find_stream_info(av->format_context, NULL) < 0)
+    if ((ret = avformat_find_stream_info(av->format_context, NULL)) < 0)
     {
-        fprintf(log_fp, "Input file '%s': avformat_find_stream_info() failed.\n", path);
+        av_strerror(ret, buf, sizeof buf);
+        fprintf(log_fp, "Input file '%s': avformat_find_stream_info() failed: %s.\n", path, buf);
         goto FailExit;
     }
 
@@ -81,15 +86,17 @@ avdec_p avdec_open(char *path, FILE *log_fp)
             goto FailExit;
         }
 
-        if (avcodec_parameters_to_context(av->video_codec_context, av->video_stream->codecpar) < 0)
+        if ((ret = avcodec_parameters_to_context(av->video_codec_context, av->video_stream->codecpar)) < 0)
         {
-            fprintf(log_fp, "Input file '%s': avcodec_parameters_to_context() failed.\n", path);
+            av_strerror(ret, buf, sizeof buf);
+            fprintf(log_fp, "Input file '%s': avcodec_parameters_to_context() failed: %s.\n", path, buf);
             goto FailExit;
         }
 
-        if (avcodec_open2(av->video_codec_context, codec, NULL))
+        if (ret = avcodec_open2(av->video_codec_context, codec, NULL))
         {
-            fprintf(log_fp, "Input file '%s': avcodec_open2() failed.\n", path);
+            av_strerror(ret, buf, sizeof buf);
+            fprintf(log_fp, "Input file '%s': avcodec_open2() failed: %s.\n", path, buf);
             goto FailExit;
         }
 
@@ -112,15 +119,17 @@ avdec_p avdec_open(char *path, FILE *log_fp)
             goto FailExit;
         }
 
-        if (avcodec_parameters_to_context(av->audio_codec_context, av->audio_stream->codecpar) < 0)
+        if ((ret = avcodec_parameters_to_context(av->audio_codec_context, av->audio_stream->codecpar)) < 0)
         {
-            fprintf(log_fp, "Input file '%s': avcodec_parameters_to_context() failed.\n", path);
+            av_strerror(ret, buf, sizeof buf);
+            fprintf(log_fp, "Input file '%s': avcodec_parameters_to_context() failed: %s.\n", path, buf);
             goto FailExit;
         }
 
-        if (avcodec_open2(av->audio_codec_context, codec, NULL))
+        if (ret = avcodec_open2(av->audio_codec_context, codec, NULL))
         {
-            fprintf(log_fp, "Input file '%s': avcodec_open2() failed.\n", path);
+            av_strerror(ret, buf, sizeof buf);
+            fprintf(log_fp, "Input file '%s': avcodec_open2() failed: %s.\n", path, buf);
             goto FailExit;
         }
 
