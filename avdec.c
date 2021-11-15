@@ -93,7 +93,7 @@ avdec_p avdec_open(char *path, FILE *log_fp)
             goto FailExit;
         }
 
-        if (ret = avcodec_open2(av->video_codec_context, codec, NULL))
+        if ((ret = avcodec_open2(av->video_codec_context, codec, NULL)) != 0)
         {
             av_strerror(ret, buf, sizeof buf);
             fprintf(log_fp, "Input file '%s': avcodec_open2() failed: %s.\n", path, buf);
@@ -126,7 +126,7 @@ avdec_p avdec_open(char *path, FILE *log_fp)
             goto FailExit;
         }
 
-        if (ret = avcodec_open2(av->audio_codec_context, codec, NULL))
+        if ((ret = avcodec_open2(av->audio_codec_context, codec, NULL)) != 0)
         {
             av_strerror(ret, buf, sizeof buf);
             fprintf(log_fp, "Input file '%s': avcodec_open2() failed: %s.\n", path, buf);
