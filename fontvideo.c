@@ -1658,7 +1658,8 @@ static void frame_normalize_input(fontvideo_frame_p f)
     float max_lum = -999999.9f;
     float min_lum = 999999.9f;
     float lum_dif = 0.0f;
-#pragma omp parallel for
+    float lum_scale = 1.7320508075688772935274463415059f;
+// #pragma omp parallel for
     for (y = 0; y < (int)f->raw_h; y++)
     {
         int x;
@@ -1679,14 +1680,15 @@ static void frame_normalize_input(fontvideo_frame_p f)
             if (src_lum > row_max) row_max = src_lum;
             else if (src_lum < row_min) row_min = src_lum;
         }
-#pragma omp critical
+// #pragma omp critical
         if (1)
         {
             if (row_max > max_lum) max_lum = row_max;
             if (row_min < min_lum) min_lum = row_min;
         }
     }
-
+    max_lum /= lum_scale;
+    min_lum /= lum_scale;
     lum_dif = max_lum - min_lum;
 
 #pragma omp parallel for
@@ -1704,9 +1706,9 @@ static void frame_normalize_input(fontvideo_frame_p f)
             float r = (float)src_pixel->u8[0] / 255.0f;
             float g = (float)src_pixel->u8[1] / 255.0f;
             float b = (float)src_pixel->u8[2] / 255.0f;
-            r = (r - min_lum) / lum_dif;
-            g = (g - min_lum) / lum_dif;
-            b = (b - min_lum) / lum_dif;
+            r = (r - min_lum) / lum_dif; if (r < 0) r = 0; else if (r > 1) r = 1;
+            g = (g - min_lum) / lum_dif; if (g < 0) g = 0; else if (g > 1) g = 1;
+            b = (b - min_lum) / lum_dif; if (b < 0) b = 0; else if (b > 1) b = 1;
             src_pixel->u8[0] = (uint8_t)(r * 255.0f);
             src_pixel->u8[1] = (uint8_t)(g * 255.0f);
             src_pixel->u8[2] = (uint8_t)(b * 255.0f);
