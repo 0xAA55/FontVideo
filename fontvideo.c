@@ -1652,6 +1652,68 @@ FailExit:
     return NULL;
 }
 
+static void frame_normalize_input(fontvideo_frame_p f)
+{
+    int y;
+    float max_lum = -999999.9f;
+    float min_lum = 999999.9f;
+    float lum_dif = 0.0f;
+#pragma omp parallel for
+    for (y = 0; y < (int)f->raw_h; y++)
+    {
+        int x;
+        float row_max = max_lum;
+        float row_min = min_lum;
+        uint32_t *raw_row = f->raw_data_row[y];
+        for (x = 0; x < (int)f->raw_w; x++)
+        {
+            union pixel
+            {
+                uint8_t u8[4];
+                uint32_t u32;
+            }   *src_pixel = (void *)&(raw_row[x]);
+            float src_r = (float)src_pixel->u8[0] / 255.0f;
+            float src_g = (float)src_pixel->u8[1] / 255.0f;
+            float src_b = (float)src_pixel->u8[2] / 255.0f;
+            float src_lum = sqrtf(src_r * src_r + src_g * src_g + src_b * src_b);
+            if (src_lum > row_max) row_max = src_lum;
+            else if (src_lum < row_min) row_min = src_lum;
+        }
+#pragma omp critical
+        if (1)
+        {
+            if (row_max > max_lum) max_lum = row_max;
+            if (row_min < min_lum) min_lum = row_min;
+        }
+    }
+
+    lum_dif = max_lum - min_lum;
+
+#pragma omp parallel for
+    for (y = 0; y < (int)f->raw_h; y++)
+    {
+        int x;
+        uint32_t *raw_row = f->raw_data_row[y];
+        for (x = 0; x < (int)f->raw_w; x++)
+        {
+            union pixel
+            {
+                uint8_t u8[4];
+                uint32_t u32;
+            }   *src_pixel = (void *)&(raw_row[x]);
+            float r = (float)src_pixel->u8[0] / 255.0f;
+            float g = (float)src_pixel->u8[1] / 255.0f;
+            float b = (float)src_pixel->u8[2] / 255.0f;
+            r = (r - min_lum) / lum_dif;
+            g = (g - min_lum) / lum_dif;
+            b = (b - min_lum) / lum_dif;
+            src_pixel->u8[0] = (uint8_t)(r * 255.0f);
+            src_pixel->u8[1] = (uint8_t)(g * 255.0f);
+            src_pixel->u8[2] = (uint8_t)(b * 255.0f);
+        }
+    }
+}
+
 static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
 {
     int fy, fw, fh;
@@ -1704,6 +1766,8 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             palette[i].rgb.b /= length;
         }
     }
+
+    if (fv->normalize_input) frame_normalize_input(f);
 
     // OpenMP will automatically disable recursive multi-threading
 #pragma omp parallel for
@@ -1901,6 +1965,8 @@ static int do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_
     {
         fprintf(fv->log_fp, "Start GPU rendering a frame. (%u)\n", get_thread_id());
     }
+
+    if (fv->normalize_input) frame_normalize_input(f);
 
     // First step: issuing a rough matching with massive instances and a small number of glyphs to match.
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO_match);

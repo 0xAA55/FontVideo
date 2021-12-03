@@ -13,7 +13,7 @@
 
 void usage(char *argv0)
 {
-    fprintf(stderr, "Usage: %s -i <input> [-o <output.txt>] [-v] [-p <seconds>] [-m] [-w <width>] [-h <height>] [-s <width> <height>] [-S <from_sec>] [-b] [--invert-color] [--no-opengl] [--no-frameskip] [--opengl-threads <number>] [--assets-meta <metafile.ini>] [--output-frame-image-sequence <prefix>]\n"
+    fprintf(stderr, "Usage: %s -i <input> [-o <output.txt>] [-v] [-p <seconds>] [-m] [-n] [-w <width>] [-h <height>] [-s <width> <height>] [-S <from_sec>] [-b] [--invert-color] [--no-opengl] [--no-frameskip] [--opengl-threads <number>] [--assets-meta <metafile.ini>] [--output-frame-image-sequence <prefix>]\n"
         "Or: %s <input>\n"
         "\t-i: Specify the input video file name.\n"
         "\t-o: [Optional] Specify the output text file name.\n"
@@ -25,6 +25,7 @@ void usage(char *argv0)
         "\t  Alias: --pre-render\n"
         "\t-m: [Optional] Mute sound output.\n"
         "\t  Aliases: --mute, --no-sound, --no-audio\n"
+        "\t-n: [Optional] Normalize input.\n"
         "\t-w: [Optional] Width of the output.\n"
         "\t  Alias: --width\n"
         "\t-h: [Optional] Height of the output.\n"
@@ -60,6 +61,7 @@ int main(int argc, char **argv)
     int output_width = 80;
     int output_height = 25;
     int do_color_invert = 0;
+    int normalize_input = 0;
     int no_colors = 0;
     int no_opengl = 0;
     int no_frameskip = 0;
@@ -145,6 +147,11 @@ int main(int argc, char **argv)
             {
                 i++;
                 mute = 1;
+            }
+            else if (!strcmp(argv[i], "-n"))
+            {
+                i++;
+                normalize_input = 1;
             }
             else if (!strcmp(argv[i], "-w") || !strcmp(argv[i], "--width"))
             {
@@ -263,6 +270,7 @@ int main(int argc, char **argv)
     if (!no_opengl) fv_allow_opengl(fv, opengl_threads);
     if (no_frameskip) fv->no_frameskip = 1;
     if (do_color_invert) fv->do_color_invert = 1;
+    if (normalize_input) fv->normalize_input = 1;
     if (output_frame_images_prefix) fv->output_frame_images_prefix = output_frame_images_prefix;
 
     if (real_time_show) fv_show(fv);
