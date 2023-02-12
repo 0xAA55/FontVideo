@@ -964,7 +964,7 @@ static glctx_p glctx_Create(fontvideo_p fv)
     }
     ctx->fv = fv;
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
     ctx->window = glfwCreateWindow(640, 480, "", NULL, NULL);
     if (!ctx->window)
