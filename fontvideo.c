@@ -524,7 +524,7 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
     glGenFramebuffers(1, &gld->FBO_final);
 
     gld->src_width = fv->output_w * fv->font_w;
-    gld->src_height = fv->output_w * fv->font_w;
+    gld->src_height = fv->output_h * fv->font_h;
     size = (size_t)gld->src_width * gld->src_height * 4;
 
     glGenTextures(1, &gld->src_texture);
@@ -2407,7 +2407,7 @@ static void locked_add_frame_to_fv(fontvideo_p fv, fontvideo_frame_p f)
     lock_frame(fv);
 
     timestamp = f->timestamp;
-    f->index = fv->frame_count++;
+    f->index = fv->frame_counter++;
     fv->precached_frame_count ++;
 
     if (!fv->frames)
