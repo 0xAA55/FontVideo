@@ -48,71 +48,152 @@ struct fontvideo_audio_struct
 typedef struct fontvideo_struct
 {
     void *userdata;
-    FILE *log_fp;
-    FILE *graphics_out_fp;
-    int output_utf8;
-    int need_chcp;
-    double precache_seconds;
-    int verbose;
-    int verbose_threading;
-    int real_time_play;
-    int do_audio_output;
-    int do_colored_output;
-    uint32_t output_w, output_h;
-    int allow_opengl;
-    int no_frameskip;
-    int do_color_invert;
-    int normalize_input;
-    int opengl_threads;
-    void *opengl_renderer;
 
-    char *font_face;
+    // Config: the `FILE*` for logging
+    FILE *log_fp;
+
+    // Config: the output `FILE*` (normally would be `stdout`)
+    FILE *graphics_out_fp;
+
+    // Config: How many frames should be pre-rendered
+    double precache_seconds;
+
+    // Config: is doing real time playing or just do rendering and output a bunch of frames?
+    int real_time_play;
+
+    // Config: should not to skip frames if the playback is lagging very much?
+    int no_frameskip;
+
+    // Config: should initialize audio device to play audio or not?
+    int do_audio_output;
+
+    // Config: should do colored output or just mono?
+    int do_colored_output;
+
+    // Config: should do color invert?
+    int do_color_invert;
+
+    // Config: should normalize the input frames brightness?
+    int normalize_input;
+
+    // Config: output size in characters
+    uint32_t output_w, output_h;
+
+    // Config: should initialize OpenGL to utilize GPU rendering?
+    int allow_opengl;
+
+    // Config: how many OpenGL threads (OpenGL contexts) should use?
+    // Every OpenGL context will consume large RAM usage, but crank up the GPU usage for efficiency.
+    int opengl_threads;
+
+    // Config: Debug purpose: should write verbose info to log file or not
+    int verbose;
+
+    // Config: Debug purpose: should write verbose info about threading to log file or not
+    int verbose_threading;
+
+    // Assets: which font face will be used for rendering? will change the console window font to match the font face.
+    char* font_face;
+
+    // Assets: the font size in pixels per glyph. Assumed every glyph is the same size.
     uint32_t font_w, font_h;
+
+    // Assets: the font source image for every glyph.
     UniformBitmap_p font_matrix;
+
+    // Assets: the dimension of the font matrix in characters.
+    uint32_t font_mat_w, font_mat_h;
+
+    // Assets: normalized glyphs, stored in the image, use as kernel array, for doing convolutional compute.
     float *font_luminance_image;
-    uint32_t font_mat_w;
-    uint32_t font_mat_h;
+
+    // Assets: the number of the glyphs.
     size_t font_code_count;
+
+    // Assets: the UTF-32 codes for each glyphs.
     uint32_t *font_codes;
+
+    // Assets: is the glyphs all full-width?
     int font_is_wide;
+
+    // Assets: is the source image black-white?
     int font_is_blackwhite;
 
+    // Status: if the character assets contains non-ascii, this state will be set to true
+    int need_chcp;
+
+    // Status: if configured console to output UTF-8 successfully, this state will be set to true
+    int output_utf8;
+
+    // Status: the internal OpenGL renderer data.
+    void* opengl_renderer;
+
+    // Status: is currently finished pre-render frames?
     int prepared;
 
+    // Status: frames queue
     fontvideo_frame_p frames;
     fontvideo_frame_p frame_last;
     atomic_int frame_lock;
 
 #ifndef FONTVIDEO_NO_SOUND
+    // Status: audio queue
     fontvideo_audio_p audios;
     fontvideo_audio_p audio_last;
     atomic_int audio_lock;
 #endif
 
-    uint32_t frame_count;
+    // Status: the current frame.
+    uint32_t frame_counter;
+
+    // Status: how many frames is extracted from the source media file and waiting for rendering
     uint32_t precached_frame_count;
+
+    // Status: how many frames is rendering.
     uint32_t rendering_frame_count;
+
+    // Status: how many frames is rendered and waiting for show
     uint32_t rendered_frame_count;
+
+    // Status: avarage render time
     double avg_rendering_time_consuming;
+
+    // Status: timestamp of last showed frame
     double last_output_time;
 
+    // Status: the buffer for output UTF-8 encoded texts to console window.
     char *utf8buf;
     size_t utf8buf_size;
+
 #if _WIN32
+    // Config: do old output (using Win32 API) or not?
     int do_old_console_output;
+
+    // Status: the buffer for doing old output
     void *old_console_buffer;
 #endif
 
+    // Config: if render to image files, this is the prefix of how to name the image sequence.
     char *output_frame_images_prefix;
 
+    // Status: is doing media file decoding?
     atomic_int doing_decoding;
+
+    // Status: is doing output?
     atomic_int doing_output;
 
+    // Status: is all frames decoded from the media file?
     int tailed;
+
+    // Status: media file decoder
     avdec_p av;
+
 #ifndef FONTVIDEO_NO_SOUND
+    // Status: sound driver
     siowrap_p sio;
 #endif
+
+    // Status: timer
     rttimer_t tmr;
 }fontvideo_t, *fontvideo_p;
 
