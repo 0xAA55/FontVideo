@@ -1581,7 +1581,7 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
                 lum += gp_lum;
             }
         }
-        fv->glyph_luminance[si] = lum;
+        fv->glyph_luminance[si] = lum / glyph_pixel_count;
         // if (lum >= 0.000001f)
         // {
         //     for (y = 0; y < fv->glyph_height; y++)
@@ -1789,7 +1789,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
     int fy, fw, fh;
     uint32_t glyph_pixel_count = fv->glyph_width * fv->glyph_height;
     int i;
-    union color
+     union color
     {
         float f[3];
         struct desc
@@ -1797,6 +1797,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             float b, g, r;
         }rgb;
     }palette[16] =
+    /*
     {
         {{0.0f, 0.0f, 0.0f}},
         {{0.0f, 0.0f, 0.5f}},
@@ -1815,10 +1816,30 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
         {{1.0f, 1.0f, 0.0f}},
         {{1.0f, 1.0f, 1.0f}}
     };
+    */
+    {
+        {{0, 0, 0}},
+        {{31, 15, 197}},
+        {{14, 161, 19}},
+        {{0, 156, 193}},
+        {{218, 55, 0}},
+        {{152, 23, 136}},
+        {{221, 150, 58}},
+        {{204, 204, 204}},
+        {{118, 118, 118}},
+        {{86, 72, 231}},
+        {{12, 198, 22}},
+        {{165, 241, 249}},
+        {{255, 120, 59}},
+        {{158, 0, 180}},
+        {{214, 214, 97}},
+        {{255, 255, 255}}
+    };
 
     fw = f->w;
     fh = f->h;
 
+    /*
     for (i = 0; i < 16; i++)
     {
         float length;
@@ -1835,6 +1856,14 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             palette[i].rgb.g /= length;
             palette[i].rgb.b /= length;
         }
+    }
+    */
+
+    for (i = 0; i < 16; i++)
+    {
+        palette[i].rgb.r /= 255.0f;
+        palette[i].rgb.g /= 255.0f;
+        palette[i].rgb.b /= 255.0f;
     }
 
     if (fv->normalize_input) frame_normalize_input(f);
@@ -1882,7 +1911,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                     src_g = (float)src_pixel->u8[1] / 255.0f;
                     src_b = (float)src_pixel->u8[2] / 255.0f;
                     src_lum = sqrtf(src_r * src_r + src_g * src_g + src_b * src_b);
-                    src_lum -= 0.5f;
+                    // src_lum -= 0.5f;
                     buf_row[x] = src_lum;
                     src_normalize += src_lum * src_lum;
                 }
