@@ -523,8 +523,8 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
     glGenFramebuffers(1, &gld->FBO_reduction);
     glGenFramebuffers(1, &gld->FBO_final);
 
-    gld->src_width = fv->output_w * fv->font_w;
-    gld->src_height = fv->output_h * fv->font_h;
+    gld->src_width = fv->output_w * fv->glyph_width;
+    gld->src_height = fv->output_h * fv->glyph_height;
     size = (size_t)gld->src_width * gld->src_height * 4;
 
     glGenTextures(1, &gld->src_texture);
@@ -544,13 +544,13 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
     glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &max_renderbuffer_size);
     if (max_tex_size > max_renderbuffer_size) max_tex_size = max_renderbuffer_size;
 
-    size = (size_t)fv->font_matrix->Width * fv->font_matrix->Height * 4;
+    size = (size_t)fv->glyph_matrix->Width * fv->glyph_matrix->Height * 4;
 
     glGenBuffers(1, &pbo_font_matrix);
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_font_matrix);
     glBufferData(GL_PIXEL_UNPACK_BUFFER, size, NULL, GL_STATIC_DRAW);
     MapPtr = glMapBuffer(GL_PIXEL_UNPACK_BUFFER, GL_WRITE_ONLY);
-    memcpy(MapPtr, fv->font_matrix->BitmapData, size);
+    memcpy(MapPtr, fv->glyph_matrix->BitmapData, size);
     glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
 
     glGenTextures(1, &gld->font_matrix_texture);
@@ -559,7 +559,7 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, fv->font_matrix->Width, fv->font_matrix->Height, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, fv->glyph_matrix->Width, fv->glyph_matrix->Height, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
     glDeleteBuffers(1, &pbo_font_matrix);
 
@@ -568,9 +568,9 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
     inst_matrix_width = 1;
     inst_matrix_height = 1;
     size = (size_t)inst_matrix_width * inst_matrix_height;
-    while (size < fv->font_code_count)
+    while (size < fv->num_glyph_codes)
     {
-        int loop_count = (int)(fv->font_code_count / size);
+        int loop_count = (int)(fv->num_glyph_codes / size);
         if (loop_count < min_loop_count) break;
         if (match_width > match_height)
         {
@@ -673,9 +673,9 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
     if (output_init_info)
     {
         int inst_count = inst_matrix_width * inst_matrix_height;
-        int loop_count = (int)(fv->font_code_count / inst_count);
+        int loop_count = (int)(fv->num_glyph_codes / inst_count);
         fprintf(fv->log_fp, "OpenGL Renderer: match size: %d x %d.\n", match_width, match_height);
-        fprintf(fv->log_fp, "Expected loop count '%d' for total code count %zu (%d x %d = %d tests run in a pass).\n", loop_count, fv->font_code_count, inst_matrix_width, inst_matrix_height, inst_count);
+        fprintf(fv->log_fp, "Expected loop count '%d' for total code count %zu (%d x %d = %d tests run in a pass).\n", loop_count, fv->num_glyph_codes, inst_matrix_width, inst_matrix_height, inst_count);
     }
 
     gld->reduction_width = match_width;
@@ -1397,6 +1397,8 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
 }
 #endif
 
+static int sort_glyph_codes_by_luminance(fontvideo_p fv);
+
 // Load font metadata and config
 static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
 {
@@ -1415,7 +1417,7 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
     size_t font_raw_code_size = 0;
     size_t font_count_max = 0;
     size_t expected_font_code_count = 0;
-    size_t font_pixel_count;
+    size_t glyph_pixel_count;
 
     // snprintf(buf, sizeof buf, "%s"SUBDIR"%s", assets_dir, meta_file);
     d_meta = dictcfg_load(meta_file, log_fp); // Parse ini file
@@ -1434,34 +1436,34 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
 
     font_bmp = dictcfg_getstr(d_font, "font_bmp", "font.bmp");
     font_code_txt = dictcfg_getstr(d_font, "font_code", "gb2312_code.txt");
-    fv->font_w = dictcfg_getint(d_font, "font_width", 12);
-    fv->font_h = dictcfg_getint(d_font, "font_height", 12);
+    fv->glyph_width = dictcfg_getint(d_font, "font_width", 12);
+    fv->glyph_height = dictcfg_getint(d_font, "font_height", 12);
     fv->font_face = dictcfg_getstr(d_font, "font_face", NULL);
-    fv->font_code_count = font_count_max = dictcfg_getint(d_font, "font_count", 127);
-    fv->font_codes = malloc(font_count_max * sizeof fv->font_codes[0]);
-    if (!fv->font_codes)
+    fv->num_glyph_codes = font_count_max = dictcfg_getint(d_font, "font_count", 127);
+    fv->glyph_codes = malloc(font_count_max * sizeof fv->glyph_codes[0]);
+    if (!fv->glyph_codes)
     {
         fprintf(log_fp, "Could not allocate font codes: '%s'.\n", strerror(errno));
         goto FailExit;
     }
-    font_pixel_count = (size_t)fv->font_w * fv->font_h;
+    glyph_pixel_count = (size_t)fv->glyph_width * fv->glyph_height;
 
     snprintf(buf, sizeof buf, "%s"SUBDIR"%s", assets_dir, font_bmp);
-    fv->font_matrix = UB_CreateFromFile((const char*)buf, log_fp);
-    if (!fv->font_matrix)
+    fv->glyph_matrix = UB_CreateFromFile((const char*)buf, log_fp);
+    if (!fv->glyph_matrix)
     {
-        fprintf(log_fp, "Could not load font matrix bitmap file from '%s'.\n", buf);
+        fprintf(log_fp, "Could not load glyph matrix bitmap file from '%s'.\n", buf);
         goto FailExit;
     }
     
 #ifdef DEBUG_OUTPUT_TO_SCREEN
-    DebugRawBitmap(0, 0, fv->font_matrix->BitmapData, fv->font_matrix->Width, fv->font_matrix->Height);
+    DebugRawBitmap(0, 0, fv->glyph_matrix->BitmapData, fv->glyph_matrix->Width, fv->glyph_matrix->Height);
 #endif
 
     // Font matrix dimension
-    fv->font_mat_w = fv->font_matrix->Width / fv->font_w;
-    fv->font_mat_h = fv->font_matrix->Height / fv->font_h;
-    expected_font_code_count = (size_t)fv->font_mat_w * fv->font_mat_h;
+    fv->glyph_matrix_cols = fv->glyph_matrix->Width / fv->glyph_width;
+    fv->glyph_matrix_rows = fv->glyph_matrix->Height / fv->glyph_height;
+    expected_font_code_count = (size_t)fv->glyph_matrix_cols * fv->glyph_matrix_rows;
 
     snprintf(buf, sizeof buf, "%s"SUBDIR"%s", assets_dir, font_code_txt);
     fp_code = fopen(buf, "r");
@@ -1501,42 +1503,43 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
         if (i >= font_count_max)
         {
             size_t new_size = i * 3 / 2 + 1;
-            uint32_t *new_ptr = realloc(fv->font_codes, new_size * sizeof new_ptr[0]);
+            uint32_t *new_ptr = realloc(fv->glyph_codes, new_size * sizeof new_ptr[0]);
             if (!new_ptr)
             {
                 fprintf(log_fp, "Could not load font code file from '%s': '%s'\n", buf, strerror(errno));
                 goto FailExit;
             }
-            fv->font_codes = new_ptr;
+            fv->glyph_codes = new_ptr;
             font_count_max = new_size;
         }
-        fv->font_codes[i++] = code;
+        fv->glyph_codes[i++] = code;
     } while (code);
 
     // Do trim excess to the buffer
-    if (i != fv->font_code_count)
+    if (i != fv->num_glyph_codes)
     {
-        uint32_t *new_ptr = realloc(fv->font_codes, i * sizeof fv->font_codes[0]);
-        if (new_ptr) fv->font_codes = new_ptr;
+        uint32_t *new_ptr = realloc(fv->glyph_codes, i * sizeof fv->glyph_codes[0]);
+        if (new_ptr) fv->glyph_codes = new_ptr;
 
-        fprintf(log_fp, "Actual count of codes read out from code file '%s' is '%zu' rather than '%zu'\n", buf, i, fv->font_code_count);
-        fv->font_code_count = i;
+        fprintf(log_fp, "Actual count of codes read out from code file '%s' is '%zu' rather than '%zu'\n", buf, i, fv->num_glyph_codes);
+        fv->num_glyph_codes = i;
     }
 
-    // Detect if the font matrix size doesn't match
-    if (fv->font_code_count > expected_font_code_count)
+    // Detect if the glyph matrix size doesn't match
+    if (fv->num_glyph_codes > expected_font_code_count)
     {
         fprintf(log_fp, "Font meta-file issue: font bitmap file size of %ux%u"
             " for glyph size %ux%u"
             " should have a maximum of %zu"
             " glyphs, but the given code count %zu"
             " exceeded the glyph count. Please correct the meta-file and run this program again.\n",
-            fv->font_matrix->Width, fv->font_matrix->Height, fv->font_w, fv->font_h, expected_font_code_count, fv->font_code_count);
+            fv->glyph_matrix->Width, fv->glyph_matrix->Height, fv->glyph_width, fv->glyph_height, expected_font_code_count, fv->num_glyph_codes);
         goto FailExit;
     }
 
-    fv->font_luminance_image = calloc(fv->font_code_count * font_pixel_count, sizeof fv->font_luminance_image[0]);
-    if (!fv->font_luminance_image)
+    fv->glyph_lum_vertical_array = calloc(fv->num_glyph_codes * glyph_pixel_count, sizeof fv->glyph_lum_vertical_array[0]);
+    fv->glyph_luminance = calloc(fv->num_glyph_codes, sizeof fv->glyph_luminance[0]);
+    if (!fv->glyph_lum_vertical_array || !fv->glyph_luminance)
     {
         fprintf(log_fp, "Could not calculate font glyph lum values: %s\n", strerror(errno));
         goto FailExit;
@@ -1544,65 +1547,130 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
 
     fv->font_is_blackwhite = 1;
 #pragma omp parallel for
-    for (si = 0; si < (ptrdiff_t)fv->font_code_count; si++)
+    for (si = 0; si < (ptrdiff_t)fv->num_glyph_codes; si++)
     {
-        UniformBitmap_p fm = fv->font_matrix;
+        UniformBitmap_p gm = fv->glyph_matrix;
         uint32_t x, y;
-        int srcx = (int)((si % fv->font_mat_w) * fv->font_w);
-        int srcy = (int)((si / fv->font_mat_w) * fv->font_h);
-        float *lum_of_glyph = &fv->font_luminance_image[si * font_pixel_count];
+        int srcx = (int)((si % fv->glyph_matrix_cols) * fv->glyph_width);
+        int srcy = (int)((si / fv->glyph_matrix_cols) * fv->glyph_height);
+        float *lum_of_glyph = &fv->glyph_lum_vertical_array[si * glyph_pixel_count];
         float lum = 0;
-        for (y = 0; y < fv->font_h; y++)
+        for (y = 0; y < fv->glyph_height; y++)
         {
-            uint32_t *row = fm->RowPointers[fm->Height - 1 - (srcy + y)];
-            float *lum_row = &lum_of_glyph[y * fv->font_w];
-            for (x = 0; x < fv->font_w; x++)
+            uint32_t *row = gm->RowPointers[gm->Height - 1 - (srcy + y)];
+            float *lum_row = &lum_of_glyph[y * fv->glyph_width];
+            for (x = 0; x < fv->glyph_width; x++)
             {
                 union pixel
                 {
                     uint8_t u8[4];
                     uint32_t u32;
                     float f32;
-                }   *font_pixel = (void *)&(row[srcx + x]);
-                float font_r, font_g, font_b;
-                float font_lum;
-                font_b = (float)font_pixel->u8[0] / 255.0f;
-                font_g = (float)font_pixel->u8[1] / 255.0f;
-                font_r = (float)font_pixel->u8[2] / 255.0f;
-                font_lum = sqrtf(font_r * font_r + font_g * font_g + font_b * font_b);
-                if (font_pixel->u32 != 0xff000000 && font_pixel->u32 != 0xffffffff)
+                }   *gp = (void *)&(row[srcx + x]);
+                float gp_r, gp_g, gp_b;
+                float gp_lum;
+                gp_b = (float)gp->u8[0] / 255.0f;
+                gp_g = (float)gp->u8[1] / 255.0f;
+                gp_r = (float)gp->u8[2] / 255.0f;
+                gp_lum = sqrtf(gp_r * gp_r + gp_g * gp_g + gp_b * gp_b);
+                if (fv->font_is_blackwhite != 0 && gp->u32 != 0xff000000 && gp->u32 != 0xffffffff)
                 {
                     fv->font_is_blackwhite = 0;
                 }
-                font_lum -= 0.5f;
-                lum_row[x] = font_lum;
-                lum += font_lum * font_lum;
+                lum_row[x] = gp_lum;
+                lum += gp_lum;
             }
         }
-        if (lum >= 0.000001f)
-        {
-            for (y = 0; y < fv->font_h; y++)
-            {
-                float *lum_row = &lum_of_glyph[y * fv->font_w];
-                for (x = 0; x < fv->font_w; x++)
-                {
-                    lum_row[x] /= sqrtf(lum);
-                }
-            }
-        }
+        fv->glyph_luminance[si] = lum;
+        // if (lum >= 0.000001f)
+        // {
+        //     for (y = 0; y < fv->glyph_height; y++)
+        //     {
+        //         float *lum_row = &lum_of_glyph[y * fv->glyph_width];
+        //         for (x = 0; x < fv->glyph_width; x++)
+        //         {
+        //             lum_row[x] /= sqrtf(lum);
+        //         }
+        //     }
+        // }
     }
 
 #ifdef DEBUG_OUTPUT_TO_SCREEN
-    DebugRawBitmap(0, 0, fv->font_matrix->BitmapData, fv->font_matrix->Width, fv->font_matrix->Height);
+    DebugRawBitmap(0, 0, fv->glyph_matrix->BitmapData, fv->glyph_matrix->Width, fv->glyph_matrix->Height);
 #endif
 
     free(font_raw_code);
     dict_delete(d_meta);
-    return 1;
+    return sort_glyph_codes_by_luminance(fv);
 FailExit:
     if (fp_code) fclose(fp_code);
     free(font_raw_code);
     dict_delete(d_meta);
+    return 0;
+}
+
+typedef struct code_lum_struct
+{
+    size_t index;
+    float lum;
+    uint32_t code;
+}code_lum_t, * code_lum_p;
+
+static int cl_compare(const void *p1, const void *p2)
+{
+    const code_lum_p cl1 = p1, cl2 = p2;
+    if (cl1->lum < cl2->lum) return -1;
+    if (cl1->lum > cl2->lum) return 1;
+    return 0;
+}
+
+int sort_glyph_codes_by_luminance(fontvideo_p fv)
+{
+    ptrdiff_t i, j;
+    code_lum_p cl_array = NULL;
+    float* glyph_array = NULL;
+    size_t num_glyph_codes;
+    size_t glyph_pixel_count;
+
+    num_glyph_codes = fv->num_glyph_codes;
+    glyph_pixel_count = (size_t)fv->glyph_width * fv->glyph_height;
+    
+    cl_array = calloc(fv->num_glyph_codes, sizeof cl_array[0]);
+    glyph_array = calloc(fv->num_glyph_codes * glyph_pixel_count, sizeof glyph_array[0]);
+    if (!cl_array || !glyph_array)
+    {
+        fprintf(fv->log_fp, "Could not sort glyphs: %s\n", strerror(errno));
+        goto FailExit;
+    }
+
+#pragma omp parallel for
+    for (i = 0; i < (ptrdiff_t)num_glyph_codes; i++)
+    {
+        code_lum_p cl = &cl_array[i];
+        cl->code = fv->glyph_codes[i];
+        cl->index = i;
+        cl->lum = fv->glyph_luminance[i];
+    }
+
+    qsort(cl_array, num_glyph_codes, sizeof cl_array[0], cl_compare);
+
+#pragma omp parallel for
+    for (i = 0; i < (ptrdiff_t)num_glyph_codes; i++)
+    {
+        code_lum_p cl = &cl_array[i];
+        j = cl->index;
+        memcpy(&glyph_array[glyph_pixel_count * i], &fv->glyph_lum_vertical_array[glyph_pixel_count * j], glyph_pixel_count * sizeof glyph_array[0]);
+        fv->glyph_codes[i] = cl->code;
+        fv->glyph_luminance[i] = cl->lum;
+    }
+
+    free(fv->glyph_lum_vertical_array);
+    fv->glyph_lum_vertical_array = glyph_array;
+    free(cl_array);
+    return 1;
+FailExit:
+    free(cl_array);
+    free(glyph_array);
     return 0;
 }
 
@@ -1719,7 +1787,7 @@ static void frame_normalize_input(fontvideo_frame_p f)
 static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
 {
     int fy, fw, fh;
-    uint32_t font_pixel_count = fv->font_w * fv->font_h;
+    uint32_t glyph_pixel_count = fv->glyph_width * fv->glyph_height;
     int i;
     union color
     {
@@ -1778,8 +1846,8 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
         int fx, sx, sy;
         uint32_t *row = f->row[fy];
         uint8_t *c_row = f->c_row[fy];
-        float *src_lum_buffer = malloc(font_pixel_count * sizeof src_lum_buffer[0]);
-        sy = fy * fv->font_h;
+        float *src_lum_buffer = malloc(glyph_pixel_count * sizeof src_lum_buffer[0]);
+        sy = fy * fv->glyph_height;
 
         for (fx = 0; fx < fw; fx++)
         {
@@ -1790,14 +1858,14 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             float src_normalize = 0;
             float best_score = -9999999.9f;
             uint8_t col = 0;
-            sx = fx * fv->font_w;
+            sx = fx * fv->glyph_width;
 
             // Compute source luminance for further use
-            for (y = 0; y < (int)fv->font_h; y++)
+            for (y = 0; y < (int)fv->glyph_height; y++)
             {
                 uint32_t *raw_row = f->raw_data_row[sy + y];
-                float *buf_row = &src_lum_buffer[y * fv->font_w];
-                for (x = 0; x < (int)fv->font_w; x++)
+                float *buf_row = &src_lum_buffer[y * fv->glyph_width];
+                for (x = 0; x < (int)fv->glyph_width; x++)
                 {
                     union pixel
                     {
@@ -1823,29 +1891,29 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             // Doing normalize
             if (src_normalize >= 0.000001f)
             {
-                for (y = 0; y < (int)fv->font_h; y++)
+                for (y = 0; y < (int)fv->glyph_height; y++)
                 {
-                    float *buf_row = &src_lum_buffer[y * fv->font_w];
-                    for (x = 0; x < (int)fv->font_w; x++)
+                    float *buf_row = &src_lum_buffer[y * fv->glyph_width];
+                    for (x = 0; x < (int)fv->glyph_width; x++)
                     {
                         buf_row[x] /= src_normalize;
                     }
                 }
             }
 
-            // Iterate the font matrix
-            for (cur_code_index = 0; cur_code_index < fv->font_code_count; cur_code_index++)
+            // Iterate the glyph matrix
+            for (cur_code_index = 0; cur_code_index < fv->num_glyph_codes; cur_code_index++)
             {
                 float score = 0;
-                float *font_lum_img = &fv->font_luminance_image[cur_code_index * font_pixel_count];
+                float *font_lum_img = &fv->glyph_lum_vertical_array[cur_code_index * glyph_pixel_count];
 
                 // Compare each pixels and collect the scores.
-                for (y = 0; y < (int)fv->font_h; y++)
+                for (y = 0; y < (int)fv->glyph_height; y++)
                 {
-                    size_t row_start = (size_t)y * fv->font_w;
+                    size_t row_start = (size_t)y * fv->glyph_width;
                     float *buf_row = &src_lum_buffer[row_start];
                     float *font_row = &font_lum_img[row_start];
-                    for (x = 0; x < (int)fv->font_w; x++)
+                    for (x = 0; x < (int)fv->glyph_width; x++)
                     {
                         float src_lum = buf_row[x];
                         float font_lum = font_row[x];
@@ -1862,19 +1930,19 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             }
 
             // The best matching char code
-            // row[fx] = fv->font_codes[best_code_index];
+            // row[fx] = fv->glyph_codes[best_code_index];
             row[fx] = best_code_index;
 
             // Get the average color of the char
-            for (y = 0; y < (int)fv->font_h; y++)
+            for (y = 0; y < (int)fv->glyph_height; y++)
             {
                 uint32_t *raw_row = f->raw_data_row[sy + y];
 #ifdef DEBUG_OUTPUT_TO_SCREEN
-                size_t row_start = (size_t)y * fv->font_w;
-                float *font_row = &fv->font_luminance_image[(size_t)best_code_index * font_pixel_count + row_start];
-                float *buf_row = &src_lum_buffer[y * fv->font_w];
+                size_t row_start = (size_t)y * fv->glyph_width;
+                float *font_row = &fv->glyph_lum_vertical_array[(size_t)best_code_index * glyph_pixel_count + row_start];
+                float *buf_row = &src_lum_buffer[y * fv->glyph_width];
 #endif
-                for (x = 0; x < (int)fv->font_w; x++)
+                for (x = 0; x < (int)fv->glyph_width; x++)
                 {
                     union pixel
                     {
@@ -1898,9 +1966,9 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                 }
             }
 
-            avr_b /= font_pixel_count; avr_b -= 0.5f;
-            avr_g /= font_pixel_count; avr_g -= 0.5f;
-            avr_r /= font_pixel_count; avr_r -= 0.5f;
+            avr_b /= glyph_pixel_count; avr_b -= 0.5f;
+            avr_g /= glyph_pixel_count; avr_g -= 0.5f;
+            avr_r /= glyph_pixel_count; avr_r -= 0.5f;
             src_normalize = sqrtf(avr_r * avr_r + avr_g * avr_g + avr_b * avr_b);
             if (src_normalize >= 0.000001f)
             {
@@ -2009,13 +2077,13 @@ static int do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_
     }
 
     Location = glGetUniformLocation(gld->match_shader, "FontMatrixCodeCount");
-    if (Location >= 0) glUniform1i(Location, (GLint)fv->font_code_count);
+    if (Location >= 0) glUniform1i(Location, (GLint)fv->num_glyph_codes);
 
     Location = glGetUniformLocation(gld->match_shader, "FontMatrixSize");
-    if (Location >= 0) glUniform2i(Location, fv->font_mat_w, fv->font_mat_h);
+    if (Location >= 0) glUniform2i(Location, fv->glyph_matrix_cols, fv->glyph_matrix_rows);
 
     Location = glGetUniformLocation(gld->match_shader, "GlyphSize");
-    if (Location >= 0) glUniform2i(Location, fv->font_w, fv->font_h);
+    if (Location >= 0) glUniform2i(Location, fv->glyph_width, fv->glyph_height);
 
     Location = glGetUniformLocation(gld->match_shader, "ConsoleSize");
     if (Location >= 0) glUniform2i(Location, fv->output_w, fv->output_h);
@@ -2183,7 +2251,7 @@ static int do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_
     }
 
     Location = glGetUniformLocation(gld->final_shader, "GlyphSize");
-    if (Location >= 0) glUniform2i(Location, fv->font_w, fv->font_h);
+    if (Location >= 0) glUniform2i(Location, fv->glyph_width, fv->glyph_height);
 
     Location = glGetUniformLocation(gld->final_shader, "ConsoleSize");
     if (Location >= 0) glUniform2i(Location, fv->output_w, fv->output_h);
@@ -2662,10 +2730,10 @@ static int create_rendered_image(fontvideo_p fv, fontvideo_frame_p rendered_fram
     size_t pitch;
     uint32_t cx, cy, bw, bh;
     uint8_t *bmp;
-    UniformBitmap_p fm = fv->font_matrix;
+    UniformBitmap_p fm = fv->glyph_matrix;
 
-    bw = fv->font_w * rendered_frame->w;
-    bh = fv->font_h * rendered_frame->h;
+    bw = fv->glyph_width * rendered_frame->w;
+    bh = fv->glyph_height * rendered_frame->h;
 
     if (fv->font_is_blackwhite)
     {
@@ -2741,20 +2809,20 @@ static int create_rendered_image(fontvideo_p fv, fontvideo_frame_p rendered_fram
         {
             uint32_t *con_row = rendered_frame->row[cy];
             uint8_t *col_row = rendered_frame->c_row[cy];
-            uint32_t dy = cy * fv->font_h;
+            uint32_t dy = cy * fv->glyph_height;
             for (cx = 0; cx < rendered_frame->w; cx++)
             {
                 uint32_t code = con_row[cx];
                 uint8_t color = col_row[cx];
-                int font_x = (int)((code % fv->font_mat_w) * fv->font_w);
-                int font_y = (int)((code / fv->font_mat_w) * fv->font_h);
-                uint32_t dx = cx * fv->font_w;
+                int font_x = (int)((code % fv->glyph_matrix_cols) * fv->glyph_width);
+                int font_y = (int)((code / fv->glyph_matrix_cols) * fv->glyph_height);
+                uint32_t dx = cx * fv->glyph_width;
                 uint32_t x, y;
-                for (y = 0; y < fv->font_h; y++)
+                for (y = 0; y < fv->glyph_height; y++)
                 {
                     uint32_t *src_row = fm->RowPointers[fm->Height - 1 - (font_y + y)];
                     uint8_t *dst_row = &bmp[(size_t)(bh - 1 - (dy + y)) * pitch];
-                    for (x = 0; x < fv->font_w; x+=2)
+                    for (x = 0; x < fv->glyph_width; x+=2)
                     {
                         size_t index = (size_t)(dx + x) >> 1;
                         dst_row[index] = 0;
@@ -2845,20 +2913,20 @@ static int create_rendered_image(fontvideo_p fv, fontvideo_frame_p rendered_fram
         {
             uint32_t *con_row = rendered_frame->row[cy];
             uint8_t *col_row = rendered_frame->c_row[cy];
-            uint32_t dy = cy * fv->font_h;
+            uint32_t dy = cy * fv->glyph_height;
             for (cx = 0; cx < rendered_frame->w; cx++)
             {
                 uint32_t code = con_row[cx];
                 uint8_t color = col_row[cx];
-                int font_x = (int)((code % fv->font_mat_w) * fv->font_w);
-                int font_y = (int)((code / fv->font_mat_w) * fv->font_h);
-                uint32_t dx = cx * fv->font_w;
+                int font_x = (int)((code % fv->glyph_matrix_cols) * fv->glyph_width);
+                int font_y = (int)((code / fv->glyph_matrix_cols) * fv->glyph_height);
+                uint32_t dx = cx * fv->glyph_width;
                 uint32_t x, y;
-                for (y = 0; y < fv->font_h; y++)
+                for (y = 0; y < fv->glyph_height; y++)
                 {
                     uint32_t *src_row = fm->RowPointers[fm->Height - 1 - (font_y + y)];
                     uint8_t *dst_row = &bmp[(size_t)(bh - 1 - (dy + y)) * pitch];
-                    for (x = 0; x < fv->font_w; x ++)
+                    for (x = 0; x < fv->glyph_width; x ++)
                     {
                         size_t index = (size_t)(dx + x) * 3;
                         union pixel
@@ -3028,7 +3096,7 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                             uint8_t *c_row = cur->c_row[y];
                             for (x = 0; x < cur->w && x < fv->output_w; x++)
                             {
-                                uint32_t Char = fv->font_codes[row[x]];
+                                uint32_t Char = fv->glyph_codes[row[x]];
                                 uint8_t Color = c_row[x];
                                 WORD Attr =
                                     (Color & 0x01 ? FOREGROUND_RED : 0) |
@@ -3058,7 +3126,7 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                         for (x = 0; x < cur->w; x++)
                         {
                             int new_color = c_row[x];
-                            uint32_t char_code = fv->font_codes[row[x]];
+                            uint32_t char_code = fv->glyph_codes[row[x]];
                             if (x == cur->w - 1) char_code = '\n';
                             if (new_color != cur_color && char_code != ' ')
                             {
@@ -3083,7 +3151,7 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                     uint32_t *row = cur->row[y];
                     for (x = 0; x < (int)cur->w; x++)
                     {
-                        u32toutf8(&u8chr, fv->font_codes[row[x]]);
+                        u32toutf8(&u8chr, fv->glyph_codes[row[x]]);
                     }
                     *u8chr++ = '\n';
                 }
@@ -3239,7 +3307,7 @@ fontvideo_p fv_create
     }
 
     // Wide-glyph detect
-    if (fv->font_w > fv->font_h / 2)
+    if (fv->glyph_width > fv->glyph_height / 2)
     {
         fv->font_is_wide = 1;
         fv->output_w /= 2;
@@ -3249,8 +3317,8 @@ fontvideo_p fv_create
     fv->utf8buf = malloc(fv->utf8buf_size);
     if (!fv->utf8buf) goto FailExit;
 
-    vf.width = fv->output_w * fv->font_w;
-    vf.height = fv->output_h * fv->font_h;
+    vf.width = fv->output_w * fv->glyph_width;
+    vf.height = fv->output_h * fv->glyph_height;
     vf.pixel_format = AV_PIX_FMT_BGRA;
     avdec_set_decoded_video_format(fv->av, &vf);
 
@@ -3419,9 +3487,10 @@ void fv_destroy(fontvideo_p fv)
     siowrap_destroy(fv->sio);
 #endif
 
-    free(fv->font_luminance_image);
-    free(fv->font_codes);
-    UB_Free(&fv->font_matrix);
+    free(fv->glyph_lum_vertical_array);
+    free(fv->glyph_codes);
+    free(fv->glyph_luminance);
+    UB_Free(&fv->glyph_matrix);
     avdec_close(&fv->av);
 
     while (fv->frames)
