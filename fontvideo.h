@@ -96,22 +96,25 @@ typedef struct fontvideo_struct
     char* font_face;
 
     // Assets: the font size in pixels per glyph. Assumed every glyph is the same size.
-    uint32_t font_w, font_h;
+    uint32_t glyph_width, glyph_height;
 
     // Assets: the font source image for every glyph.
-    UniformBitmap_p font_matrix;
+    UniformBitmap_p glyph_matrix;
 
-    // Assets: the dimension of the font matrix in characters.
-    uint32_t font_mat_w, font_mat_h;
+    // Assets: the dimension of the glyph matrix in characters.
+    uint32_t glyph_matrix_cols, glyph_matrix_rows;
 
-    // Assets: normalized glyphs, stored in the image, use as kernel array, for doing convolutional compute.
-    float *font_luminance_image;
+    // Assets: glyph pixels, every glyph is stored in one vertical image, use as kernel array, for doing convolutional compute.
+    float *glyph_lum_vertical_array;
 
     // Assets: the number of the glyphs.
-    size_t font_code_count;
+    size_t num_glyph_codes;
 
     // Assets: the UTF-32 codes for each glyphs.
-    uint32_t *font_codes;
+    uint32_t *glyph_codes;
+
+    // Assets: the calculated average luminance in [0, 1] for each glyph
+    float* glyph_luminance;
 
     // Assets: is the glyphs all full-width?
     int font_is_wide;
