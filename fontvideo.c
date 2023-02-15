@@ -1988,8 +1988,8 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                     float *font_row = &font_lum_img[row_start];
                     for (x = 0; x < (int)fv->glyph_width; x++)
                     {
-                        float src_lum = buf_row[x];
-                        float font_lum = font_row[x];
+                        float src_lum = buf_row[x] - 0.5f;
+                        float font_lum = font_row[x] - 0.5f;
                         score += src_lum * font_lum;
                     }
                 }
