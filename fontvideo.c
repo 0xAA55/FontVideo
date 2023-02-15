@@ -1471,8 +1471,8 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
     fv->glyph_width = dictcfg_getint(d_font, "font_width", 12);
     fv->glyph_height = dictcfg_getint(d_font, "font_height", 12);
     fv->font_face = dictcfg_getstr(d_font, "font_face", NULL);
-    fv->num_glyph_codes = font_count_max = dictcfg_getint(d_font, "font_count", 127);
-    fv->brightness_weight = (float)dictcfg_getfloat(d_font, "brightness_weight", 0.875);
+    fv->num_glyph_codes = font_count_max = dictcfg_getint(d_font, "glyph_count", 127);
+    fv->brightness_weight = (float)dictcfg_getfloat(d_font, "brightness_weight", 1.0 - (1.0 / 64.0));
     fv->glyph_codes = malloc(font_count_max * sizeof fv->glyph_codes[0]);
     if (!fv->glyph_codes)
     {
