@@ -1639,6 +1639,8 @@ FailExit:
     return 0;
 }
 
+static void normalize_glyph(float *out, const float *in, size_t glyph_pixel_count);
+
 typedef struct code_lum_struct
 {
     size_t index;
@@ -1690,7 +1692,8 @@ int sort_glyph_codes_by_luminance(fontvideo_p fv)
     {
         code_lum_p cl = &cl_array[i];
         j = cl->index;
-        memcpy(&glyph_array[glyph_pixel_count * i], &fv->glyph_vertical_array[glyph_pixel_count * j], glyph_pixel_count * sizeof glyph_array[0]);
+        // memcpy(&glyph_array[glyph_pixel_count * i], &fv->glyph_vertical_array[glyph_pixel_count * j], glyph_pixel_count * sizeof glyph_array[0]);
+        normalize_glyph(&glyph_array[glyph_pixel_count * i], &fv->glyph_vertical_array[glyph_pixel_count * j], glyph_pixel_count);
         fv->glyph_codes[i] = cl->code;
         fv->glyph_brightness[i] = cl->lum;
     }
@@ -1706,6 +1709,28 @@ FailExit:
     free(cl_array);
     free(glyph_array);
     return 0;
+}
+
+void normalize_glyph(float* out, const float* in, size_t glyph_pixel_count)
+{
+    double lengthsq = 0;
+    double length;
+    size_t i;
+
+    for (i = 0; i < glyph_pixel_count; i++)
+    {
+        double in_val = in[i] - 0.5;
+        lengthsq += in_val * in_val;
+    }
+
+    length = sqrt(lengthsq);
+    if (length < 0.000001) length = 1.0;
+    
+    for (i = 0; i < glyph_pixel_count; i++)
+    {
+        double in_val = in[i] - 0.5;
+        out[i] = (float)(in_val / length);
+    }
 }
 
 // Create a frame, create buffers, copy the source bitmap, preparing for the rendering
@@ -1891,9 +1916,9 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             int32_t best_code_index = 0;
             int32_t start_code_position = 0;
             int32_t end_code_position = 0;
-            float src_normalize = 0;
-            float src_brightness = 0;
-            float best_score = -9999999.9f;
+            double src_normalize = 0;
+            double src_brightness = 0;
+            double best_score = -9999999.9f;
             uint8_t col = 0;
             sx = fx * fv->glyph_width;
 
@@ -1916,11 +1941,15 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                     src_g = (float)src_pixel->u8[1] / 255.0f;
                     src_b = (float)src_pixel->u8[2] / 255.0f;
                     src_lum = (float)(sqrt(src_r * src_r + src_g * src_g + src_b * src_b) / sqrt_3);
-                    buf_row[x] = src_lum;
-                    src_brightness += src_lum;
+                    src_brightness += (double)src_lum; // Get brightness
+                    src_lum -= 0.5f; // Bias for convolutional
+                    buf_row[x] = src_lum; // Store for normalize
+                    src_normalize += (double)src_lum * src_lum; // LengthSq
                 }
             }
             src_brightness /= glyph_pixel_count;
+            src_normalize = sqrt(src_normalize);
+            if (src_normalize < 0.000001) src_normalize = 1;
 
             // Instead of clamping the brightness, we scale the src_brightness to fit the capacity.
             src_brightness = fv->glyph_brightness_min + src_brightness * (fv->glyph_brightness_max - fv->glyph_brightness_min);
@@ -1963,19 +1992,13 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                 }
             }
 
-            if (start_code_position < 0)
-            {
-                start_code_position = 0;
-                end_code_position = start_code_position + fv->candidate_glyph_window_size - 1;
-            }
-            if (end_code_position > num_glyph_codes - 1)
-            {
-                end_code_position = (int32_t)num_glyph_codes - 1;
-                start_code_position = (int32_t)num_glyph_codes - fv->candidate_glyph_window_size;
-            }
+            if (start_code_position < 0) start_code_position = 0;
+            if (end_code_position < start_code_position) end_code_position = start_code_position;
+            if (end_code_position > num_glyph_codes - 1) end_code_position = (int32_t)num_glyph_codes - 1;
+            if (start_code_position > end_code_position) start_code_position = end_code_position;
             for (cur_code_index = start_code_position; cur_code_index <= end_code_position; cur_code_index++)
             {
-                float score = 0;
+                double score = 0;
                 float *font_lum_img = &fv->glyph_vertical_array[cur_code_index * glyph_pixel_count];
 
                 // Compare each pixels and collect the scores.
@@ -1986,13 +2009,12 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                     float *font_row = &font_lum_img[row_start];
                     for (x = 0; x < (int)fv->glyph_width; x++)
                     {
-                        float src_lum = buf_row[x] - 0.5f;
-                        float font_lum = font_row[x] - 0.5f;
+                        double src_lum = buf_row[x] / src_normalize;
+                        float font_lum = font_row[x];
                         score += src_lum * font_lum;
                     }
                 }
 
-                // Do vector normalize
                 if (score >= best_score)
                 {
                     best_score = score;
@@ -2045,13 +2067,11 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             avr_b -= 0.5f;
             avr_g -= 0.5f;
             avr_r -= 0.5f;
-            src_normalize = sqrtf(avr_r * avr_r + avr_g * avr_g + avr_b * avr_b);
-            if (src_normalize >= 0.000001f)
-            {
-                avr_b /= src_normalize;
-                avr_g /= src_normalize;
-                avr_r /= src_normalize;
-            }
+            src_normalize = sqrt(avr_r * avr_r + avr_g * avr_g + avr_b * avr_b);
+            if (src_normalize < 0.000001) src_normalize = 1;
+            avr_b /= src_normalize;
+            avr_g /= src_normalize;
+            avr_r /= src_normalize;
 
             best_score = -9999999.9f;
             // best_score = 9999999.9f;
