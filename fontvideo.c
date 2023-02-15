@@ -30,6 +30,8 @@
 
 #define DISCARD_FRAME_NUM_THRESHOLD 10
 
+static const double sqrt_3 = 1.7320508075688772935274463415059;
+
 static uint32_t get_thread_id()
 {
     return (uint32_t)thrd_current();
@@ -1171,6 +1173,7 @@ FailExit:
 #else
 int fv_allow_opengl(fontvideo_p fv, int opengl_threads)
 {
+    opengl_threads;
     fprintf(fv->log_fp, "Macro `FONTVIDEO_ALLOW_OPENGL` not defined when compiling, giving up using OpenGL.\n");
     return 0;
 }
@@ -1469,7 +1472,7 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
     fv->glyph_height = dictcfg_getint(d_font, "font_height", 12);
     fv->font_face = dictcfg_getstr(d_font, "font_face", NULL);
     fv->num_glyph_codes = font_count_max = dictcfg_getint(d_font, "font_count", 127);
-    fv->brightness_weight = dictcfg_getfloat(d_font, "brightness_weight", 0.875);
+    fv->brightness_weight = (float)dictcfg_getfloat(d_font, "brightness_weight", 0.875);
     fv->glyph_codes = malloc(font_count_max * sizeof fv->glyph_codes[0]);
     if (!fv->glyph_codes)
     {
@@ -1569,9 +1572,9 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
 
     if (fv->brightness_weight < 0) fv->brightness_weight = 0;
     else if (fv->brightness_weight > 1) fv->brightness_weight = 1;
-    fv->candidate_glyph_window_size = (size_t)(fv->num_glyph_codes * fabs(1.0f - fv->brightness_weight));
+    fv->candidate_glyph_window_size = (int)(fv->num_glyph_codes * fabs(1.0f - fv->brightness_weight));
     if (fv->candidate_glyph_window_size < 1) fv->candidate_glyph_window_size = 1;
-    else if (fv->candidate_glyph_window_size > fv->num_glyph_codes) fv->candidate_glyph_window_size = fv->num_glyph_codes;
+    else if (fv->candidate_glyph_window_size > fv->num_glyph_codes) fv->candidate_glyph_window_size = (int)fv->num_glyph_codes;
 
     fv->glyph_vertical_array = calloc(fv->num_glyph_codes * glyph_pixel_count, sizeof fv->glyph_vertical_array[0]);
     fv->glyph_brightness = calloc(fv->num_glyph_codes, sizeof fv->glyph_brightness[0]);
@@ -1608,7 +1611,7 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
                 gp_b = (float)gp->u8[0] / 255.0f;
                 gp_g = (float)gp->u8[1] / 255.0f;
                 gp_r = (float)gp->u8[2] / 255.0f;
-                gp_lum = sqrtf(gp_r * gp_r + gp_g * gp_g + gp_b * gp_b);
+                gp_lum = (float)(sqrt(gp_r * gp_r + gp_g * gp_g + gp_b * gp_b) / sqrt_3);
                 if (fv->font_is_blackwhite != 0 && gp->u32 != 0xff000000 && gp->u32 != 0xffffffff)
                 {
                     fv->font_is_blackwhite = 0;
@@ -1619,17 +1622,6 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
         }
         glyph_brightness /= glyph_pixel_count;
         fv->glyph_brightness[si] = glyph_brightness;
-        // if (lum >= 0.000001f)
-        // {
-        //     for (y = 0; y < fv->glyph_height; y++)
-        //     {
-        //         float *lum_row = &lum_of_glyph[y * fv->glyph_width];
-        //         for (x = 0; x < fv->glyph_width; x++)
-        //         {
-        //             lum_row[x] /= sqrtf(lum);
-        //         }
-        //     }
-        // }
     }
 
 #ifdef DEBUG_OUTPUT_TO_SCREEN
@@ -1655,7 +1647,8 @@ typedef struct code_lum_struct
 
 static int cl_compare(const void *p1, const void *p2)
 {
-    const code_lum_p cl1 = p1, cl2 = p2;
+    const code_lum_t * cl1 = p1;
+    const code_lum_t * cl2 = p2;
     if (cl1->lum < cl2->lum) return -1;
     if (cl1->lum > cl2->lum) return 1;
     return 0;
@@ -1784,7 +1777,7 @@ static void frame_normalize_input(fontvideo_frame_p f)
             float src_r = (float)src_pixel->u8[0] / 255.0f;
             float src_g = (float)src_pixel->u8[1] / 255.0f;
             float src_b = (float)src_pixel->u8[2] / 255.0f;
-            float src_lum = sqrtf(src_r * src_r + src_g * src_g + src_b * src_b);
+            float src_lum = (float)(sqrt(src_r * src_r + src_g * src_g + src_b * src_b) / sqrt_3);
             if (src_lum > row_max) row_max = src_lum;
             else if (src_lum < row_min) row_min = src_lum;
         }
@@ -1893,10 +1886,10 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
         {
             int x, y;
             float avr_r = 0, avr_g = 0, avr_b = 0;
-            uint32_t cur_code_index = 0;
-            uint32_t best_code_index = 0;
-            uint32_t start_code_position = 0;
-            uint32_t end_code_position = 0;
+            int32_t cur_code_index = 0;
+            int32_t best_code_index = 0;
+            int32_t start_code_position = 0;
+            int32_t end_code_position = 0;
             float src_normalize = 0;
             float src_brightness = 0;
             float best_score = -9999999.9f;
@@ -1924,57 +1917,25 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                     src_r = (float)src_pixel->u8[0] / 255.0f;
                     src_g = (float)src_pixel->u8[1] / 255.0f;
                     src_b = (float)src_pixel->u8[2] / 255.0f;
-                    src_lum = sqrtf(src_r * src_r + src_g * src_g + src_b * src_b);
-                    // src_lum -= 0.5f;
+                    src_lum = (float)(sqrt(src_r * src_r + src_g * src_g + src_b * src_b) / sqrt_3);
                     buf_row[x] = src_lum;
-                    // src_normalize += src_lum * src_lum;
                     src_brightness += src_lum;
                 }
             }
-            // **The following commented code uses vector matching method to pickup best glyph**
-            // src_normalize = sqrtf(src_normalize);
-            // // Doing normalize
-            // if (src_normalize >= 0.000001f)
-            // {
-            //     for (y = 0; y < (int)fv->glyph_height; y++)
-            //     {
-            //         float *buf_row = &src_lum_buffer[y * fv->glyph_width];
-            //         for (x = 0; x < (int)fv->glyph_width; x++)
-            //         {
-            //             buf_row[x] /= src_normalize;
-            //         }
-            //     }
-            // }
             src_brightness /= glyph_pixel_count;
-            assert(src_brightness >= 0 && src_brightness <= 1); // Check if I'm poor in math
-
-            // __Iterate through all of the glyph images__
-            // for (cur_code_index = 0; cur_code_index < num_glyph_codes; cur_code_index++)
-            // No. Now we use glyphs that is inside the brightness window
-
-            /*if (src_brightness <= fv->glyph_brightness_min)
-            {
-                start_code_position = 0;
-                end_code_position = fv->candidate_glyph_window_size - 1;
-            }
-            else if (src_brightness > fv->glyph_brightness_max)
-            {
-                start_code_position = num_glyph_codes - fv->candidate_glyph_window_size;
-                end_code_position = num_glyph_codes - 1;
-            }
-            else
-            */
 
             // Instead of clamping the brightness, we scale the src_brightness to fit the capacity.
             src_brightness = fv->glyph_brightness_min + src_brightness * (fv->glyph_brightness_max - fv->glyph_brightness_min);
             if (1)
             {
-                size_t
+                int32_t half_window = fv->candidate_glyph_window_size / 2 + 1;
+                int32_t
                     left = 0,
-                    right = num_glyph_codes - 1,
-                    mid = num_glyph_codes / 2;
+                    right = (int32_t)(num_glyph_codes - 1),
+                    mid = (int32_t)(num_glyph_codes / 2);
                 float left_brightness = fv->glyph_brightness[left];
                 float right_brightness = fv->glyph_brightness[right];
+                // bisection approximation
                 for (;;)
                 {
                     float mid_brightness = fv->glyph_brightness[mid];
@@ -1990,24 +1951,29 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                     }
                     else
                     {
-                        start_code_position = left;
-                        end_code_position = left + fv->candidate_glyph_window_size - 1;
+                        start_code_position = left - half_window;
+                        end_code_position = start_code_position + fv->candidate_glyph_window_size - 1;
                         break;
                     }
                     mid = (right + left) / 2;
                     if (mid == left)
                     {
-                        start_code_position = left;
-                        end_code_position = left + fv->candidate_glyph_window_size - 1;
+                        start_code_position = left - half_window;
+                        end_code_position = start_code_position + fv->candidate_glyph_window_size - 1;
                         break;
                     }
                 }
             }
 
+            if (start_code_position < 0)
+            {
+                start_code_position = 0;
+                end_code_position = start_code_position + fv->candidate_glyph_window_size - 1;
+            }
             if (end_code_position > num_glyph_codes - 1)
             {
-                end_code_position = num_glyph_codes - 1;
-                start_code_position = num_glyph_codes - fv->candidate_glyph_window_size;
+                end_code_position = (int32_t)num_glyph_codes - 1;
+                start_code_position = (int32_t)num_glyph_codes - fv->candidate_glyph_window_size;
             }
             for (cur_code_index = start_code_position; cur_code_index <= end_code_position; cur_code_index++)
             {
