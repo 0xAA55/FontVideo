@@ -1616,6 +1616,7 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
                 {
                     fv->font_is_blackwhite = 0;
                 }
+                if (fv->do_color_invert) gp_lum = 1.0f - gp_lum;
                 lum_row[x] = gp_lum;
                 glyph_brightness += gp_lum;
             }
@@ -1910,10 +1911,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                     }   *src_pixel = (void *)&(raw_row[sx + x]);
                     float src_r, src_g, src_b;
                     float src_lum;
-                    if (fv->do_color_invert)
-                    {
-                        src_pixel->u32 ^= 0xffffff;
-                    }
+                    if (fv->do_color_invert) src_pixel->u32 ^= 0xffffff;
                     src_r = (float)src_pixel->u8[0] / 255.0f;
                     src_g = (float)src_pixel->u8[1] / 255.0f;
                     src_b = (float)src_pixel->u8[2] / 255.0f;
