@@ -1830,7 +1830,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
     size_t num_glyph_codes = fv->num_glyph_codes;
     uint32_t glyph_pixel_count = fv->glyph_width * fv->glyph_height;
     int i;
-    union color
+    static union color
     {
         float f[3];
         struct desc
@@ -1838,33 +1838,43 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             float b, g, r;
         }rgb;
     }palette[16];
+    static int palette_initialized = 0;
 
     fw = f->w;
     fh = f->h;
 
-    for (i = 0; i < 16; i++)
+    if (!palette_initialized)
     {
-        palette[i].rgb.r = (float)console_palette[i].rgb.r / 255.0f;
-        palette[i].rgb.g = (float)console_palette[i].rgb.g / 255.0f;
-        palette[i].rgb.b = (float)console_palette[i].rgb.b / 255.0f;
-    }
-
-    for (i = 0; i < 16; i++)
-    {
-        float length;
-        palette[i].rgb.r -= 0.5f;
-        palette[i].rgb.g -= 0.5f;
-        palette[i].rgb.b -= 0.5f;
-        length = sqrtf(
-            palette[i].rgb.r * palette[i].rgb.r +
-            palette[i].rgb.g * palette[i].rgb.g +
-            palette[i].rgb.b * palette[i].rgb.b);
-        if (length >= 0.000001f)
+        // Get the palette from the table and convert to float [0, 1]
+        for (i = 0; i < 16; i++)
         {
-            palette[i].rgb.r /= length;
-            palette[i].rgb.g /= length;
-            palette[i].rgb.b /= length;
+            palette[i].rgb.r = (float)console_palette[i].rgb.r / 255.0f;
+            palette[i].rgb.g = (float)console_palette[i].rgb.g / 255.0f;
+            palette[i].rgb.b = (float)console_palette[i].rgb.b / 255.0f;
         }
+
+        // Process palettes to make vectors for matching
+        // To prevent all-grey (color-picking failed)
+        for (i = 0; i < 16; i++)
+        {
+            float length;
+            palette[i].rgb.r -= 0.5f;
+            palette[i].rgb.g -= 0.5f;
+            palette[i].rgb.b -= 0.5f;
+            length = sqrtf(
+                palette[i].rgb.r * palette[i].rgb.r +
+                palette[i].rgb.g * palette[i].rgb.g +
+                palette[i].rgb.b * palette[i].rgb.b);
+
+            // Do normalize
+            if (length >= 0.000001f)
+            {
+                palette[i].rgb.r /= length;
+                palette[i].rgb.g /= length;
+                palette[i].rgb.b /= length;
+            }
+        }
+        palette_initialized = 1;
     }
 
     if (fv->normalize_input) frame_normalize_input(f);
@@ -1936,12 +1946,13 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             //     }
             // }
             src_brightness /= glyph_pixel_count;
+            assert(src_brightness >= 0 && src_brightness <= 1); // Check if I'm poor in math
 
             // __Iterate through all of the glyph images__
             // for (cur_code_index = 0; cur_code_index < num_glyph_codes; cur_code_index++)
             // No. Now we use glyphs that is inside the brightness window
 
-            if (src_brightness <= fv->glyph_brightness_min)
+            /*if (src_brightness <= fv->glyph_brightness_min)
             {
                 start_code_position = 0;
                 end_code_position = fv->candidate_glyph_window_size - 1;
@@ -1952,6 +1963,11 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                 end_code_position = num_glyph_codes - 1;
             }
             else
+            */
+
+            // Instead of clamping the brightness, we scale the src_brightness to fit the capacity.
+            src_brightness = fv->glyph_brightness_min + src_brightness * (fv->glyph_brightness_max - fv->glyph_brightness_min);
+            if (1)
             {
                 size_t
                     left = 0,
