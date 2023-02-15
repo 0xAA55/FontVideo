@@ -274,6 +274,35 @@ static void backoff(int *iter_counter)
     }
 }
 
+
+static union colorBGR
+{
+    uint8_t f[4];
+    struct desc
+    {
+        uint8_t b, g, r, x;
+    }rgb;
+    uint32_t packed;
+}console_palette[16] =
+{
+    {{0, 0, 0}},
+    {{31, 15, 197}},
+    {{14, 161, 19}},
+    {{0, 156, 193}},
+    {{218, 55, 0}},
+    {{152, 23, 136}},
+    {{221, 150, 58}},
+    {{204, 204, 204}},
+    {{118, 118, 118}},
+    {{86, 72, 231}},
+    {{12, 198, 22}},
+    {{165, 241, 249}},
+    {{255, 120, 59}},
+    {{158, 0, 180}},
+    {{214, 214, 97}},
+    {{255, 255, 255}}
+};
+
 #ifdef FONTVIDEO_ALLOW_OPENGL
 
 static atomic_int GLFWInitialized = 0;
@@ -1801,57 +1830,25 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
     size_t num_glyph_codes = fv->num_glyph_codes;
     uint32_t glyph_pixel_count = fv->glyph_width * fv->glyph_height;
     int i;
-     union color
+    union color
     {
         float f[3];
         struct desc
         {
             float b, g, r;
         }rgb;
-    }palette[16] =
-    /*
-    {
-        {{0.0f, 0.0f, 0.0f}},
-        {{0.0f, 0.0f, 0.5f}},
-        {{0.0f, 0.5f, 0.0f}},
-        {{0.0f, 0.5f, 0.5f}},
-        {{0.5f, 0.0f, 0.0f}},
-        {{0.5f, 0.0f, 0.5f}},
-        {{0.5f, 0.5f, 0.0f}},
-        {{0.5f, 0.5f, 0.5f}},
-        {{0.3f, 0.3f, 0.3f}},
-        {{0.0f, 0.0f, 1.0f}},
-        {{0.0f, 1.0f, 0.0f}},
-        {{0.0f, 1.0f, 1.0f}},
-        {{1.0f, 0.0f, 0.0f}},
-        {{1.0f, 0.0f, 1.0f}},
-        {{1.0f, 1.0f, 0.0f}},
-        {{1.0f, 1.0f, 1.0f}}
-    };
-    */
-    {
-        {{0, 0, 0}},
-        {{31, 15, 197}},
-        {{14, 161, 19}},
-        {{0, 156, 193}},
-        {{218, 55, 0}},
-        {{152, 23, 136}},
-        {{221, 150, 58}},
-        {{204, 204, 204}},
-        {{118, 118, 118}},
-        {{86, 72, 231}},
-        {{12, 198, 22}},
-        {{165, 241, 249}},
-        {{255, 120, 59}},
-        {{158, 0, 180}},
-        {{214, 214, 97}},
-        {{255, 255, 255}}
-    };
+    }palette[16];
 
     fw = f->w;
     fh = f->h;
 
-    /*
+    for (i = 0; i < 16; i++)
+    {
+        palette[i].rgb.r = (float)console_palette[i].rgb.r / 255.0f;
+        palette[i].rgb.g = (float)console_palette[i].rgb.g / 255.0f;
+        palette[i].rgb.b = (float)console_palette[i].rgb.b / 255.0f;
+    }
+
     for (i = 0; i < 16; i++)
     {
         float length;
@@ -1868,14 +1865,6 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             palette[i].rgb.g /= length;
             palette[i].rgb.b /= length;
         }
-    }
-    */
-
-    for (i = 0; i < 16; i++)
-    {
-        palette[i].rgb.r /= 255.0f;
-        palette[i].rgb.g /= 255.0f;
-        palette[i].rgb.b /= 255.0f;
     }
 
     if (fv->normalize_input) frame_normalize_input(f);
@@ -2845,6 +2834,7 @@ static int get_frame_and_render(fontvideo_p fv)
 static int create_rendered_image(fontvideo_p fv, fontvideo_frame_p rendered_frame, void ** out_file_content_buffer, size_t *out_file_content_size)
 {
     void *buffer = NULL;
+    size_t i;
     size_t buf_size = 0;
     size_t pitch;
     uint32_t cx, cy, bw, bh;
@@ -2906,22 +2896,10 @@ static int create_rendered_image(fontvideo_p fv, fontvideo_frame_p rendered_fram
         header->biYPelsPerMeter = 0;
         header->biClrUsed = 16;
         header->biClrImportant = 0;
-        header->Palette[000] = 0x000000;
-        header->Palette[001] = 0x7F0000;
-        header->Palette[002] = 0x007F00;
-        header->Palette[003] = 0x7F7F00;
-        header->Palette[004] = 0x00007F;
-        header->Palette[005] = 0x7F007F;
-        header->Palette[006] = 0x007F7F;
-        header->Palette[007] = 0x7F7F7F;
-        header->Palette[010] = 0x3F3F3F;
-        header->Palette[011] = 0xFF0000;
-        header->Palette[012] = 0x00FF00;
-        header->Palette[013] = 0xFFFF00;
-        header->Palette[014] = 0x0000FF;
-        header->Palette[015] = 0xFF00FF;
-        header->Palette[016] = 0x00FFFF;
-        header->Palette[017] = 0xFFFFFF;
+        for (i = 0; i < 16; i++)
+        {
+            header->Palette[i] = console_palette[i].packed;
+        }
 
         bmp = (void *)&header[1];
         for (cy = 0; cy < rendered_frame->h; cy++)
@@ -2978,26 +2956,13 @@ static int create_rendered_image(fontvideo_p fv, fontvideo_frame_p rendered_fram
         {
             uint32_t u32;
             uint8_t u8[4];
-        } Palette[16] =
-        {
-            {0x000000},
-            {0x00007F},
-            {0x007F00},
-            {0x007F7F},
-            {0x7F0000},
-            {0x7F007F},
-            {0x7F7F00},
-            {0x7F7F7F},
-            {0x3F3F3F},
-            {0x0000FF},
-            {0x00FF00},
-            {0x00FFFF},
-            {0xFF0000},
-            {0xFF00FF},
-            {0xFFFF00},
-            {0xFFFFFF}
-        };
+        } Palette[16];
 #pragma pack(pop)
+
+        for (i = 0; i < 16; i++)
+        {
+            Palette[i].u32 = console_palette[i].packed;
+        }
 
         pitch = (((size_t)bw * 24 - 1) / 32 + 1) * 4;
         buf_size = sizeof header[0] + pitch * bh;
