@@ -73,6 +73,9 @@ typedef struct fontvideo_struct
     // Config: should do color invert?
     int do_color_invert;
 
+    // Config: the weight of brightness in [0, 1], how important of the brightness
+    float brightness_weight;
+
     // Config: should normalize the input frames brightness?
     int normalize_input;
 
@@ -105,7 +108,7 @@ typedef struct fontvideo_struct
     uint32_t glyph_matrix_cols, glyph_matrix_rows;
 
     // Assets: glyph pixels, every glyph is stored in one vertical image, use as kernel array, for doing convolutional compute.
-    float *glyph_lum_vertical_array;
+    float *glyph_vertical_array;
 
     // Assets: the number of the glyphs.
     size_t num_glyph_codes;
@@ -114,7 +117,10 @@ typedef struct fontvideo_struct
     uint32_t *glyph_codes;
 
     // Assets: the calculated average luminance in [0, 1] for each glyph
-    float* glyph_luminance;
+    float* glyph_brightness;
+
+    // Assets: the max brightness and the min brightness
+    float glyph_brightness_max, glyph_brightness_min;
 
     // Assets: is the glyphs all full-width?
     int font_is_wide;
@@ -127,6 +133,10 @@ typedef struct fontvideo_struct
 
     // Status: if configured console to output UTF-8 successfully, this state will be set to true
     int output_utf8;
+
+    // Status: the window size of the candidate glyphs, affected by `brightness_weight` and `num_glyph_codes`
+    // The more weight for brightness, the smaller window size
+    int candidate_glyph_window_size;
 
     // Status: the internal OpenGL renderer data.
     void* opengl_renderer;
