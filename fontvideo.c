@@ -26,6 +26,7 @@
 
 #ifdef _DEBUG
 #   define DEBUG_OUTPUT_TO_SCREEN 1
+#   define DEBUG_BGRX(r, g, b) (0xff000000 | (uint8_t)(b) | ((uint32_t)((uint8_t)(g)) << 8) | ((uint32_t)((uint8_t)(r)) << 16))
 #endif
 
 #define DISCARD_FRAME_NUM_THRESHOLD 10
@@ -1489,9 +1490,9 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
         goto FailExit;
     }
     
-#ifdef DEBUG_OUTPUT_TO_SCREEN
-    DebugRawBitmap(0, 0, fv->glyph_matrix->BitmapData, fv->glyph_matrix->Width, fv->glyph_matrix->Height);
-#endif
+// #ifdef DEBUG_OUTPUT_TO_SCREEN
+//     DebugRawBitmap(0, 0, fv->glyph_matrix->BitmapData, fv->glyph_matrix->Width, fv->glyph_matrix->Height);
+// #endif
 
     // Font matrix dimension
     fv->glyph_matrix_cols = fv->glyph_matrix->Width / fv->glyph_width;
@@ -1596,7 +1597,7 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
         float glyph_brightness = 0;
         for (y = 0; y < fv->glyph_height; y++)
         {
-            uint32_t *row = gm->RowPointers[gm->Height - 1 - (srcy + y)];
+            uint32_t *row = gm->RowPointers[srcy + y];
             float *lum_row = &lum_of_glyph[y * fv->glyph_width];
             for (x = 0; x < fv->glyph_width; x++)
             {
@@ -1625,9 +1626,9 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
         fv->glyph_brightness[si] = glyph_brightness;
     }
 
-#ifdef DEBUG_OUTPUT_TO_SCREEN
-    DebugRawBitmap(0, 0, fv->glyph_matrix->BitmapData, fv->glyph_matrix->Width, fv->glyph_matrix->Height);
-#endif
+//#ifdef DEBUG_OUTPUT_TO_SCREEN
+//    DebugRawBitmap(0, 0, fv->glyph_matrix->BitmapData, fv->glyph_matrix->Width, fv->glyph_matrix->Height);
+//#endif
 
     free(font_raw_code);
     dict_delete(d_meta);
@@ -1654,23 +1655,29 @@ static int cl_compare(const void *p1, const void *p2)
     const code_lum_t * cl2 = p2;
     if (cl1->lum < cl2->lum) return -1;
     if (cl1->lum > cl2->lum) return 1;
+    if (cl1->code < cl2->code) return -1;
+    if (cl1->code > cl2->code) return 1;
+    // if (cl1->index > cl2->index) return -1;
+    // if (cl1->index < cl2->index) return 1;
     return 0;
 }
 
 int sort_glyph_codes_by_luminance(fontvideo_p fv)
 {
-    ptrdiff_t i, j;
+    ptrdiff_t i;
     code_lum_p cl_array = NULL;
     float* glyph_array = NULL;
+    UniformBitmap_p sorted_gm = NULL;
     size_t num_glyph_codes;
     size_t glyph_pixel_count;
 
     num_glyph_codes = fv->num_glyph_codes;
     glyph_pixel_count = (size_t)fv->glyph_width * fv->glyph_height;
     
-    cl_array = calloc(fv->num_glyph_codes, sizeof cl_array[0]);
-    glyph_array = calloc(fv->num_glyph_codes * glyph_pixel_count, sizeof glyph_array[0]);
-    if (!cl_array || !glyph_array)
+    cl_array = calloc(num_glyph_codes, sizeof cl_array[0]);
+    glyph_array = calloc(num_glyph_codes * glyph_pixel_count, sizeof glyph_array[0]);
+    sorted_gm = UB_CreateFromCopy(fv->glyph_matrix);
+    if (!cl_array || !glyph_array || !sorted_gm)
     {
         fprintf(fv->log_fp, "Could not sort glyphs: %s\n", strerror(errno));
         goto FailExit;
@@ -1690,24 +1697,56 @@ int sort_glyph_codes_by_luminance(fontvideo_p fv)
 #pragma omp parallel for
     for (i = 0; i < (ptrdiff_t)num_glyph_codes; i++)
     {
+        ptrdiff_t j;
         code_lum_p cl = &cl_array[i];
+        uint32_t gm_sx, gm_sy, gm_dx, gm_dy, y;
+
         j = cl->index;
-        // memcpy(&glyph_array[glyph_pixel_count * i], &fv->glyph_vertical_array[glyph_pixel_count * j], glyph_pixel_count * sizeof glyph_array[0]);
-        normalize_glyph(&glyph_array[glyph_pixel_count * i], &fv->glyph_vertical_array[glyph_pixel_count * j], glyph_pixel_count);
         fv->glyph_codes[i] = cl->code;
         fv->glyph_brightness[i] = cl->lum;
+
+        normalize_glyph(&glyph_array[glyph_pixel_count * i], &fv->glyph_vertical_array[glyph_pixel_count * j], glyph_pixel_count);
+
+        // Sort the glyph matrix as well
+        gm_sx = j % fv->glyph_matrix_cols;
+        gm_sy = j / fv->glyph_matrix_cols;
+        gm_dx = i % fv->glyph_matrix_cols;
+        gm_dy = i / fv->glyph_matrix_cols;
+
+        gm_sx *= fv->glyph_width;
+        gm_sy *= fv->glyph_height;
+        gm_dx *= fv->glyph_width;
+        gm_dy *= fv->glyph_height;
+
+        for (y = 0; y < fv->glyph_height; y++)
+        {
+            // uint32_t x;
+            // for (x = 0; x < fv->glyph_width; x++)
+            // {
+            //     uint8_t c = 255 * (glyph_array[glyph_pixel_count * i + y * fv->glyph_width + x]);
+            //     sorted_gm->RowPointers[gm_dy + y][gm_dx + x] = DEBUG_BGRX(c, c, c);
+            // }
+            memcpy(&sorted_gm->RowPointers[gm_dy + y][gm_dx], &fv->glyph_matrix->RowPointers[gm_sy + y][gm_sx], fv->glyph_width * sizeof(uint32_t));
+        }
     }
 
     fv->glyph_brightness_min = fv->glyph_brightness[0];
     fv->glyph_brightness_max = fv->glyph_brightness[num_glyph_codes - 1];
 
+    UB_Free(&fv->glyph_matrix);
+    fv->glyph_matrix = sorted_gm;
     free(fv->glyph_vertical_array);
     fv->glyph_vertical_array = glyph_array;
     free(cl_array);
+
+#ifdef DEBUG_OUTPUT_TO_SCREEN
+    DebugRawBitmap(0, 0, fv->glyph_matrix->BitmapData, fv->glyph_matrix->Width, fv->glyph_matrix->Height);
+#endif
     return 1;
 FailExit:
     free(cl_array);
     free(glyph_array);
+    UB_Free(&sorted_gm);
     return 0;
 }
 
@@ -2917,7 +2956,7 @@ static int create_rendered_image(fontvideo_p fv, fontvideo_frame_p rendered_fram
                 uint32_t x, y;
                 for (y = 0; y < fv->glyph_height; y++)
                 {
-                    uint32_t *src_row = fm->RowPointers[fm->Height - 1 - (font_y + y)];
+                    uint32_t *src_row = fm->RowPointers[font_y + y];
                     uint8_t *dst_row = &bmp[(size_t)(bh - 1 - (dy + y)) * pitch];
                     for (x = 0; x < fv->glyph_width; x+=2)
                     {
@@ -3008,7 +3047,7 @@ static int create_rendered_image(fontvideo_p fv, fontvideo_frame_p rendered_fram
                 uint32_t x, y;
                 for (y = 0; y < fv->glyph_height; y++)
                 {
-                    uint32_t *src_row = fm->RowPointers[fm->Height - 1 - (font_y + y)];
+                    uint32_t *src_row = fm->RowPointers[font_y + y];
                     uint8_t *dst_row = &bmp[(size_t)(bh - 1 - (dy + y)) * pitch];
                     for (x = 0; x < fv->glyph_width; x ++)
                     {
