@@ -1666,7 +1666,7 @@ int sort_glyph_codes_by_luminance(fontvideo_p fv)
     
     cl_array = calloc(num_glyph_codes, sizeof cl_array[0]);
     glyph_array = calloc(num_glyph_codes * glyph_pixel_count, sizeof glyph_array[0]);
-    sorted_gm = UB_CreateFromCopy(fv->glyph_matrix);
+    sorted_gm = UB_CreateNew(fv->glyph_matrix->Width, fv->glyph_matrix->Height);
     if (!cl_array || !glyph_array || !sorted_gm)
     {
         fprintf(fv->log_fp, "Could not sort glyphs: %s\n", strerror(errno));
