@@ -3433,10 +3433,20 @@ fontvideo_p fv_create
     if (!x_resolution || !no_auto_aspect_adjust)
     {
         avdec_video_format_t vf;
+        uint32_t desired_x;
         avdec_get_video_format(fv->av, &vf);
-        x_resolution = y_resolution * 2 * vf.width / vf.height;
-        x_resolution += x_resolution & 1;
-        if (!x_resolution) x_resolution = 2;
+        desired_x = y_resolution * 2 * vf.width / vf.height;
+        desired_x += desired_x & 1;
+        if (!desired_x) desired_x = 2;
+        if (!x_resolution) x_resolution = desired_x;
+        else if (desired_x > x_resolution)
+        {
+            uint32_t desired_y;
+            desired_x = x_resolution;
+            desired_y = (x_resolution * vf.height / vf.width) / 2;
+            if (!desired_y) desired_y = 1;
+            y_resolution = desired_y;
+        }
     }
     if (!fv_set_output_resolution(fv, x_resolution, y_resolution)) goto FailExit;
 
