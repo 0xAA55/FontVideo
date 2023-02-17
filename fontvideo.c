@@ -277,7 +277,6 @@ static void backoff(int *iter_counter)
     }
 }
 
-
 static union colorBGR
 {
     uint8_t f[4];
