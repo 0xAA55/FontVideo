@@ -251,8 +251,8 @@ static void relax_sleep(uint64_t milliseconds)
 static void backoff(int *iter_counter)
 {
     const int max_iter = 16;
-    const int max_yield = 64;
-    const int max_sleep_ms = 1000;
+    const int max_yield = 1;
+    const int max_sleep_ms = 100;
     if (iter_counter[0] < 0) iter_counter[0] = 0;
     if (iter_counter[0] < max_iter)
     {
@@ -263,7 +263,7 @@ static void backoff(int *iter_counter)
     else if (iter_counter[0] - max_iter < max_yield)
     {
         iter_counter[0] ++;
-        if (!yield()) iter_counter[0] = max_iter + max_yield;
+        if (!yield()) relax_sleep(1);
     }
     else
     {
@@ -3268,7 +3268,7 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                             u32toutf8(&u8chr, char_code);
                         }
                     }
-                    *u8chr = '\0';
+                    set_console_color(fv, 7);// *u8chr = '\0';
                     fputs(fv->utf8buf, fv->graphics_out_fp);
                     done_output = 1;
                 }
