@@ -113,7 +113,7 @@ UniformBitmap_p UB_CreateNew(uint32_t Width, uint32_t Height)
 	UB->Height = Height;
 
 	UB->BitmapData = calloc((size_t)Width * Height, sizeof UB->BitmapData[0]);
-	UB->RowPointers = malloc(Height * sizeof UB->BitmapData[0]);
+	UB->RowPointers = malloc(Height * sizeof UB->RowPointers[0]);
 	if (!UB->BitmapData || !UB->RowPointers) goto FailExit;
 
 	UB_SetupRowPointers(UB, 0);
