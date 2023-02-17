@@ -222,7 +222,8 @@ fontvideo_p fv_create
     uint32_t y_resolution,
     double precache_seconds,
     int do_audio_output,
-    double start_timestamp
+    double start_timestamp,
+    int no_auto_aspect_adjust
 );
 
 int fv_allow_opengl(fontvideo_p fv, int opengl_threads);

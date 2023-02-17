@@ -3379,6 +3379,8 @@ static int decode_frames(fontvideo_p fv, int max_precache_frame_count)
     return ret;
 }
 
+static int fv_set_output_resolution(fontvideo_p fv, uint32_t x_resolution, uint32_t y_resolution);
+
 fontvideo_p fv_create
 (
     char *input_file,
@@ -3391,11 +3393,11 @@ fontvideo_p fv_create
     uint32_t y_resolution,
     double precache_seconds,
     int do_audio_output,
-    double start_timestamp
+    double start_timestamp,
+    int no_auto_aspect_adjust
 )
 {
     fontvideo_p fv = NULL;
-    avdec_video_format_t vf = {0};
     avdec_audio_format_t af = {0};
 
     fv = calloc(1, sizeof fv[0]);
@@ -3419,8 +3421,6 @@ fontvideo_p fv_create
     if (!fv->av) goto FailExit;
     fv->av->userdata = fv;
 
-    fv->output_w = x_resolution;
-    fv->output_h = y_resolution;
     fv->precache_seconds = precache_seconds;
 
     if (!load_font(fv, "assets", assets_meta_file)) goto FailExit;
@@ -3429,21 +3429,16 @@ fontvideo_p fv_create
         init_console(fv);
     }
 
-    // Wide-glyph detect
-    if (fv->glyph_width > fv->glyph_height / 2)
+    if (!y_resolution) y_resolution = 24;
+    if (!x_resolution || !no_auto_aspect_adjust)
     {
-        fv->font_is_wide = 1;
-        fv->output_w /= 2;
+        avdec_video_format_t vf;
+        avdec_get_video_format(fv->av, &vf);
+        x_resolution = y_resolution * 2 * vf.width / vf.height;
+        x_resolution += x_resolution & 1;
+        if (!x_resolution) x_resolution = 2;
     }
-
-    fv->utf8buf_size = (size_t)fv->output_w * fv->output_h * 32 + 1;
-    fv->utf8buf = malloc(fv->utf8buf_size);
-    if (!fv->utf8buf) goto FailExit;
-
-    vf.width = fv->output_w * fv->glyph_width;
-    vf.height = fv->output_h * fv->glyph_height;
-    vf.pixel_format = AV_PIX_FMT_BGRA;
-    avdec_set_decoded_video_format(fv->av, &vf);
+    if (!fv_set_output_resolution(fv, x_resolution, y_resolution)) goto FailExit;
 
     if (do_audio_output)
     {
@@ -3464,6 +3459,34 @@ fontvideo_p fv_create
 FailExit:
     fv_destroy(fv);
     return NULL;
+}
+
+int fv_set_output_resolution(fontvideo_p fv, uint32_t x_resolution, uint32_t y_resolution)
+{
+    avdec_video_format_t vf = { 0 };
+
+    fv->output_w = x_resolution;
+    fv->output_h = y_resolution;
+
+    // Wide-glyph detect
+    if (fv->glyph_width > fv->glyph_height / 2)
+    {
+        fv->font_is_wide = 1;
+        fv->output_w /= 2;
+    }
+
+    free(fv->utf8buf);
+    fv->utf8buf_size = (size_t)fv->output_w * fv->output_h * 32 + 1;
+    fv->utf8buf = malloc(fv->utf8buf_size);
+    if (!fv->utf8buf) goto FailExit;
+
+    vf.width = fv->output_w * fv->glyph_width;
+    vf.height = fv->output_h * fv->glyph_height;
+    vf.pixel_format = AV_PIX_FMT_BGRA;
+    avdec_set_decoded_video_format(fv->av, &vf);
+    return 1;
+FailExit:
+    return 0;
 }
 
 int fv_show_prepare(fontvideo_p fv)

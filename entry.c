@@ -262,7 +262,8 @@ int main(int argc, char **argv)
         output_height,
         prerender_secs,
         !mute,
-        start_sec
+        start_sec,
+        0
     );
     if (!fv) goto FailExit;
 
