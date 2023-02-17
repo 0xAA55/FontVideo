@@ -13,7 +13,7 @@
 
 void usage(char *argv0)
 {
-    fprintf(stderr, "Usage: %s -i <input> [-o <output.txt>] [-v] [-p <seconds>] [-m] [-n] [-w <width>] [-h <height>] [-s <width> <height>] [-S <from_sec>] [-b] [--invert-color] [--no-opengl] [--no-frameskip] [--opengl-threads <number>] [--assets-meta <metafile.ini>] [--output-frame-image-sequence <prefix>]\n"
+    fprintf(stderr, "Usage: %s -i <input> [-o <output.txt>] [-v] [-p <seconds>] [-m] [-n] [-w <width>] [-h <height>] [-s <width> <height>] [-S <from_sec>] [-b] [--invert-color] [--no-opengl] [--no-frameskip] [--no-auto-aspect-adjust] [--opengl-threads <number>] [--assets-meta <metafile.ini>] [--output-frame-image-sequence <prefix>]\n"
         "Or: %s <input>\n"
         "\t-i: Specify the input video file name.\n"
         "\t-o: [Optional] Specify the output text file name.\n"
@@ -40,6 +40,7 @@ void usage(char *argv0)
         "\t--invert-color: [Optional] Do color invert.\n"
         "\t--no-opengl: [Optional] Do not use OpenGL to accelerate rendering.\n"
         "\t--no-frameskip: [Optional] Do not skip frames, which may cause video and audio could not sync.\n"
+        "\t--no-auto-aspect-adjust: [Optional] Do not adjsut aspect ratio by changing output width automatically.\n"
         "\t--opengl-threads: [Optional] Set the OpenGL Renderer's thread number, default to your CPU thread number divide 4.\n"
         "\t--assets-meta: [Optional] Use specified meta file, default is to use 'assets"SUBDIR"meta.ini'.\n"
         "\t--output-frame-image-sequence: [Optional] Output each frame image to a directory. The format of the image is `bmp`.\n"
@@ -65,6 +66,7 @@ int main(int argc, char **argv)
     int no_colors = 0;
     int no_opengl = 0;
     int no_frameskip = 0;
+    int no_auto_aspect_adjust = 0;
     int opengl_threads = 0; // 0 for default.
     char *assets_meta = "assets"SUBDIR"meta.ini";
     char *output_frame_images_prefix = NULL;
@@ -195,6 +197,11 @@ int main(int argc, char **argv)
                 i++;
                 no_frameskip = 1;
             }
+            else if (!strcmp(argv[i], "--no-auto-aspect-adjust"))
+            {
+                i++;
+                no_auto_aspect_adjust = 1;
+            }
             else if (!strcmp(argv[i], "--opengl-threads"))
             {
                 if (++i >= argc) goto BadUsageExit;
@@ -263,7 +270,7 @@ int main(int argc, char **argv)
         prerender_secs,
         !mute,
         start_sec,
-        0
+        no_auto_aspect_adjust
     );
     if (!fv) goto FailExit;
 
