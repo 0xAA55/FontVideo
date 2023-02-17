@@ -275,11 +275,11 @@ int main(int argc, char **argv)
     if (!fv) goto FailExit;
 
     if (no_colors) fv->do_colored_output = 0;
-    if (!no_opengl) fv_allow_opengl(fv, opengl_threads);
     if (no_frameskip) fv->no_frameskip = 1;
     if (do_color_invert) fv->do_color_invert = 1;
     if (normalize_input) fv->normalize_input = 1;
     if (output_frame_images_prefix) fv->output_frame_images_prefix = output_frame_images_prefix;
+    if (!no_opengl) fv_allow_opengl(fv, opengl_threads);
 
     if (real_time_show) fv_show(fv);
     else
