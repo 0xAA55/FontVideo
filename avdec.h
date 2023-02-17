@@ -81,8 +81,8 @@ typedef void(*pfn_on_get_video)(avdec_p av, void *bitmap, int width, int height,
 typedef void(*pfn_on_get_audio)(avdec_p av, void **samples_of_channel, int channel_count, size_t num_samples_per_channel, double timestamp);
 
 avdec_p avdec_open(char *path, FILE *log_fp);
-int avdec_get_video_format(avdec_p av, avdec_video_format_p vf);
-int avdec_get_audio_format(avdec_p av, avdec_audio_format_p af);
+void avdec_get_video_format(avdec_p av, avdec_video_format_p vf);
+void avdec_get_audio_format(avdec_p av, avdec_audio_format_p af);
 int avdec_set_decoded_video_format(avdec_p av, avdec_video_format_p vf); // Conversion will be performed if the format doesn't match the original decoded format.
 int avdec_set_decoded_audio_format(avdec_p av, avdec_audio_format_p af);
 int avdec_seek(avdec_p av, double timestamp);
