@@ -81,6 +81,48 @@ static uint32_t ARGB(uint8_t R, uint8_t G, uint8_t B, uint8_t A)
 	return Block.u32;
 }
 
+static void UB_SetupRowPointers(UniformBitmap_p UB, int is_bottom_to_top)
+{
+	size_t i;
+	if (is_bottom_to_top)
+	{
+		uint32_t MaxY = UB->Height - 1;
+		for (i = 0; i < UB->Height; i++)
+		{
+			UB->RowPointers[i] = &UB->BitmapData[(MaxY - i) * UB->Width];
+		}
+	}
+	else
+	{
+		for (i = 0; i < UB->Height; i++)
+		{
+			UB->RowPointers[i] = &UB->BitmapData[i * UB->Width];
+		}
+	}
+}
+
+// Create new blank UniformBitmap
+UniformBitmap_p UB_CreateNew(uint32_t Width, uint32_t Height)
+{
+	UniformBitmap_p UB = NULL;
+
+	UB = calloc(1, sizeof * UB);
+	if (!UB) return NULL;
+
+	UB->Width = Width;
+	UB->Height = Height;
+
+	UB->BitmapData = calloc((size_t)Width * Height, sizeof UB->BitmapData[0]);
+	UB->RowPointers = malloc(Height * sizeof UB->BitmapData[0]);
+	if (!UB->BitmapData || !UB->RowPointers) goto FailExit;
+
+	UB_SetupRowPointers(UB, 0);
+	return UB;
+FailExit:
+	UB_Free(&UB);
+	return NULL;
+}
+
 // Create UniformBitmap from a `bmp` file.
 // The `bmp` file shouldn't be RLE compressed. Currently not implemented.
 // Indexed-color bitmap and bitmap with bitfields are supported.
@@ -234,17 +276,11 @@ UniformBitmap_p UB_CreateFromFile(const char *FilePath, FILE *log_fp)
 	// Check the row order of the bitmap file, unify it to top-bottom
 	if (BMIF.biHeight < 0)
 	{
-		for (i = 0; i < UB->Height; i++)
-		{
-			UB->RowPointers[i] = &UB->BitmapData[i * UB->Width];
-		}
+		UB_SetupRowPointers(UB, 0);
 	}
 	else
 	{
-		for (i = 0; i < UB->Height; i++)
-		{
-			UB->RowPointers[i] = &UB->BitmapData[(UB->Height - i - 1) * UB->Width];
-		}
+		UB_SetupRowPointers(UB, 1);
 	}
 
 	Pitch = ((size_t)(BMIF.biWidth * BMIF.biBitCount - 1) / 32 + 1) * 4;
@@ -481,10 +517,7 @@ UniformBitmap_p UB_CreateFromFile(const char *FilePath, FILE *log_fp)
 	free(ReadInLineBuffer);
 
 	// After a success read (the readed bitmap is top-to-bottom), the row pointers should also be set to top-to-bottom
-	for (i = 0; i < UB->Height; i++)
-	{
-		UB->RowPointers[i] = &UB->BitmapData[i * UB->Width];
-	}
+	UB_SetupRowPointers(UB, 0);
 
 	return UB;
 FailExit:
@@ -500,8 +533,8 @@ int UB_SaveToFile_24(UniformBitmap_p UB, const char *FilePath)
 	size_t Pitch;
 	uint8_t *Buffer = NULL;
 	uint32_t x, y;
-	BitmapFileHeader_t BMFH;
-	BitmapInfoHeader_t BMIF;
+	BitmapFileHeader_t BMFH = {0};
+	BitmapInfoHeader_t BMIF = {0};
 
 	if (!UB || !FilePath) return 0;
 
@@ -565,8 +598,8 @@ int UB_SaveToFile_32(UniformBitmap_p UB, const char *FilePath)
 	FILE *fp = NULL;
 	size_t Pitch;
 	uint32_t y;
-	BitmapFileHeader_t BMFH;
-	BitmapInfoHeader_t BMIF;
+	BitmapFileHeader_t BMFH = {0};
+	BitmapInfoHeader_t BMIF = {0};
 
 	if (!UB || !FilePath) return 0;
 
@@ -614,7 +647,6 @@ UniformBitmap_p UB_CreateFromCopy(UniformBitmap_p Source)
 {
 	UniformBitmap_p NewUB;
 	size_t BitmapSize;
-	size_t Row;
 
 	if (!Source) return NULL;
 
@@ -622,7 +654,7 @@ UniformBitmap_p UB_CreateFromCopy(UniformBitmap_p Source)
 	if (!NewUB) return NewUB;
 	memset(NewUB, 0, sizeof * NewUB);
 
-	BitmapSize = Source->Width * Source->Height * sizeof Source->BitmapData[0];
+	BitmapSize = (size_t)Source->Width * Source->Height * sizeof Source->BitmapData[0];
 
 	NewUB->Width = Source->Width;
 	NewUB->Height = Source->Height;
@@ -634,10 +666,7 @@ UniformBitmap_p UB_CreateFromCopy(UniformBitmap_p Source)
 
 	memcpy(NewUB->BitmapData, Source->BitmapData, BitmapSize);
 
-	for (Row = 0; Row < NewUB->Height; Row++)
-	{
-		NewUB->RowPointers[Row] = &NewUB->BitmapData[Row * NewUB->Width];
-	}
+	UB_SetupRowPointers(NewUB, 0);
 
 	return NewUB;
 FailExit:
