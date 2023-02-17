@@ -157,22 +157,18 @@ FailExit:
     return NULL;
 }
 
-int avdec_get_video_format(avdec_p av, avdec_video_format_p vf)
+void avdec_get_video_format(avdec_p av, avdec_video_format_p vf)
 {
-    if (!av || !vf || !av->video_codec_context) return 0;
+    if (!av || !vf || !av->video_codec_context) return;
 
     get_video_format(av->video_codec_context, vf);
-
-    return 1;
 }
 
-int avdec_get_audio_format(avdec_p av, avdec_audio_format_p af)
+void avdec_get_audio_format(avdec_p av, avdec_audio_format_p af)
 {
-    if (!av || !af || !av->audio_codec_context) return 0;
+    if (!av || !af || !av->audio_codec_context) return;
 
     get_audio_format(av->audio_codec_context, af);
-
-    return 1;
 }
 
 int avdec_set_decoded_video_format(avdec_p av, avdec_video_format_p vf)
