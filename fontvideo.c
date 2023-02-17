@@ -1699,7 +1699,7 @@ int sort_glyph_codes_by_luminance(fontvideo_p fv)
     {
         ptrdiff_t j;
         code_lum_p cl = &cl_array[i];
-        uint32_t gm_sx, gm_sy, gm_dx, gm_dy, y;
+        ptrdiff_t gm_sx, gm_sy, gm_dx, gm_dy, y;
 
         j = cl->index;
         fv->glyph_codes[i] = cl->code;
@@ -2095,6 +2095,13 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                         src_pixel->u8[1] = uv;
                         src_pixel->u8[2] = uv;
                     }
+                    else
+                    {
+                        uint8_t uv = (uint8_t)(buf_row[x] * 255.0f);
+                        src_pixel->u8[0] = uv;
+                        src_pixel->u8[1] = uv;
+                        src_pixel->u8[2] = uv;
+                    }
 #endif
                 }
             }
@@ -2108,9 +2115,9 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             avr_r -= 0.5f;
             src_normalize = sqrt(avr_r * avr_r + avr_g * avr_g + avr_b * avr_b);
             if (src_normalize < 0.000001) src_normalize = 1;
-            avr_b /= src_normalize;
-            avr_g /= src_normalize;
-            avr_r /= src_normalize;
+            avr_b = (float)(avr_b / src_normalize);
+            avr_g = (float)(avr_g / src_normalize);
+            avr_r = (float)(avr_r / src_normalize);
 
             best_score = -9999999.9f;
             // best_score = 9999999.9f;
@@ -3438,7 +3445,7 @@ fontvideo_p fv_create
         desired_x = y_resolution * 2 * vf.width / vf.height;
         desired_x += desired_x & 1;
         if (!desired_x) desired_x = 2;
-        if (!x_resolution) x_resolution = desired_x;
+        if (!x_resolution || desired_x < x_resolution) x_resolution = desired_x;
         else if (desired_x > x_resolution)
         {
             uint32_t desired_y;
