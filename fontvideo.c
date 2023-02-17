@@ -29,8 +29,7 @@
 #   define DEBUG_BGRX(r, g, b) (0xff000000 | (uint8_t)(b) | ((uint32_t)((uint8_t)(g)) << 8) | ((uint32_t)((uint8_t)(r)) << 16))
 #endif
 
-#define DISCARD_FRAME_NUM_THRESHOLD 10
-
+static const int discard_frame_num_threshold = 10;
 static const double sqrt_3 = 1.7320508075688772935274463415059;
 
 static uint32_t get_thread_id()
@@ -1488,10 +1487,6 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
         fprintf(log_fp, "Could not load glyph matrix bitmap file from '%s'.\n", buf);
         goto FailExit;
     }
-    
-// #ifdef DEBUG_OUTPUT_TO_SCREEN
-//     DebugRawBitmap(0, 0, fv->glyph_matrix->BitmapData, fv->glyph_matrix->Width, fv->glyph_matrix->Height);
-// #endif
 
     // Font matrix dimension
     fv->glyph_matrix_cols = fv->glyph_matrix->Width / fv->glyph_width;
@@ -1624,10 +1619,6 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
         glyph_brightness /= glyph_pixel_count;
         fv->glyph_brightness[si] = glyph_brightness;
     }
-
-//#ifdef DEBUG_OUTPUT_TO_SCREEN
-//    DebugRawBitmap(0, 0, fv->glyph_matrix->BitmapData, fv->glyph_matrix->Width, fv->glyph_matrix->Height);
-//#endif
 
     free(font_raw_code);
     dict_delete(d_meta);
@@ -1894,7 +1885,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
         {
             float b, g, r;
         }rgb;
-    }palette[16];
+    }palette[16] = { 0 };
     static int palette_initialized = 0;
 
     fw = f->w;
@@ -3001,7 +2992,7 @@ static int create_rendered_image(fontvideo_p fv, fontvideo_frame_p rendered_fram
         {
             uint32_t u32;
             uint8_t u8[4];
-        } Palette[16];
+        } Palette[16] = { 0 };
 #pragma pack(pop)
 
         for (i = 0; i < 16; i++)
@@ -3117,7 +3108,7 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
 
                 // If the next frame also need to output right now, skip the current frame
                 discard_threshold++;
-                if (discard_threshold >= DISCARD_FRAME_NUM_THRESHOLD)
+                if (discard_threshold >= discard_frame_num_threshold)
                 {
                     if (cur->rendered)
                     {

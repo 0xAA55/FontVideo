@@ -21,10 +21,13 @@ typedef struct UniformBitmap_struct
 	uint32_t **RowPointers;
 }UniformBitmap_t, *UniformBitmap_p;
 
-// The alpha channel will be set to 255 if the bitmap file don't contains it.
+// Create
+UniformBitmap_p UB_CreateNew(uint32_t Width, uint32_t Height);
+
+// Load. The alpha channel will be set to 255 if the bitmap file don't contains it.
 UniformBitmap_p UB_CreateFromFile(const char *FilePath, FILE *log_fp);
 
-// Copy
+// Copy.
 UniformBitmap_p UB_CreateFromCopy(UniformBitmap_p Source);
 
 int UB_SaveToFile_24(UniformBitmap_p UB, const char *FilePath);
