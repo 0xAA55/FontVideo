@@ -310,36 +310,34 @@ static atomic_int GLFWInitialized = 0;
 
 typedef struct opengl_data_struct
 {
+    char* common_vsh_source;
+
     GLuint PBO_src;
     GLuint src_texture;
     int src_width;
     int src_height;
 
-    GLuint FBO_match;
-    GLuint match_texture;
-    int match_width;
-    int match_height;
-    GLuint match_shader;
+    GLuint FBO_pass1;
+    GLuint src_modulus_texture;
+    GLuint src_average_texture;
+    GLuint brightness_index_texture;
+    int brightness_width;
+    int brightness_height;
+    GLuint pass1_shader;
+    char* pass1_shader_source;
 
-    GLuint FBO_reduction;
-    GLuint reduction_texture1;
-    GLuint reduction_texture2;
-    int reduction_width;
-    int reduction_height;
-    GLuint reduction_shader;
-    GLuint PBO_reduction;
-    size_t PBO_reduction_size;
+    GLuint FBO_result;
+    GLuint PBO_result;
+    GLuint PBO_result_c;
+    GLuint result_texture;
+    GLuint result_texture_c;
+    int result_width;
+    int result_height;
+    GLuint result_shader;
+    char* result_shader_source;
 
-    GLuint FBO_final;
-    GLuint PBO_final;
-    GLuint PBO_final_c;
-    GLuint final_texture;
-    GLuint final_texture_c;
-    int final_width;
-    int final_height;
-    GLuint final_shader;
-
-    GLuint font_matrix_texture;
+    GLuint font_glyph_image_matrix_texture;
+    GLuint font_glyph_brightness_matrix_texture;
 
     GLuint Quad_VAO;
     int output_info;
@@ -381,6 +379,27 @@ static int output_program_infolog(GLuint program, FILE *compiler_output)
         return 0;
     }
     return 1;
+}
+
+static char* load_text_file(const char *FilePath)
+{
+    FILE* fp = fopen(FilePath, "r");
+    size_t size;
+    char* ret = NULL;
+    if (!fp) return NULL;
+    fseek(fp, 0, SEEK_END);
+    size = (size_t)ftell(fp);
+    ret = malloc(size + 1);
+    if (!ret)
+    {
+        fclose(fp);
+        return NULL;
+    }
+    rewind(fp);
+    ret[size] = '\0';
+    fread(ret, 1, size, fp);
+    fclose(fp);
+    return ret;
 }
 
 static GLuint create_shader_program(FILE *compiler_output, const char *vs_code, const char *gs_code, const char *fs_code)
@@ -452,34 +471,32 @@ static void opengl_data_destroy(opengl_data_p gld)
         GLuint BuffersToDelete[] =
         {
             gld->PBO_src,
-            gld->PBO_reduction,
-            gld->PBO_final,
-            gld->PBO_final_c
+            gld->PBO_result,
+            gld->PBO_result_c
         };
 
         GLuint TexturesToDelete[] =
         {
             gld->src_texture,
-            gld->match_texture,
-            gld->reduction_texture1,
-            gld->reduction_texture2,
-            gld->final_texture,
-            gld->final_texture_c,
-            gld->font_matrix_texture
+            gld->src_modulus_texture,
+            gld->src_average_texture,
+            gld->brightness_index_texture,
+            gld->result_texture,
+            gld->result_texture_c,
+            gld->font_glyph_image_matrix_texture,
+            gld->font_glyph_brightness_matrix_texture
         };
 
         GLuint FBOsToDelete[] =
         {
-            gld->FBO_match,
-            gld->FBO_reduction,
-            gld->FBO_final
+            gld->FBO_pass1,
+            gld->FBO_result
         };
 
         GLuint ShadersToDelete[] =
         {
-            gld->match_shader,
-            gld->reduction_shader,
-            gld->final_shader
+            gld->pass1_shader,
+            gld->result_shader
         };
 
         glDeleteBuffers(sizeof BuffersToDelete / sizeof BuffersToDelete[0], BuffersToDelete);
@@ -487,6 +504,9 @@ static void opengl_data_destroy(opengl_data_p gld)
         glDeleteFramebuffers(sizeof FBOsToDelete / sizeof FBOsToDelete[0], FBOsToDelete);
         for (i = 0; i < sizeof ShadersToDelete / sizeof ShadersToDelete[0]; i++) glDeleteShader(ShadersToDelete[i]);
         glDeleteVertexArrays(1, &gld->Quad_VAO);
+
+        free(gld->pass1_shader_source);
+        free(gld->result_shader_source);
 
         free(gld);
     }
@@ -515,17 +535,12 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
     size_t size;
     void *MapPtr;
     GLuint quad_vbo = 0;
-    GLuint pbo_font_matrix = 0;
-    GLint match_width = 0;
-    GLint match_height = 0;
+    GLuint pbo_font_glyph_matrix = 0;
     GLint max_tex_size;
     GLint max_renderbuffer_size;
     GLint Location;
     GLenum err_code = GL_NO_ERROR;
-    int inst_matrix_width;
-    int inst_matrix_height;
     int err_line = __LINE__;
-    const int min_loop_count = 5;
     struct Quad_Vertex_Struct
     {
         float PosX;
@@ -544,18 +559,23 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
 
     if (!GLEW_VERSION_3_0)
     {
-        fprintf(fv->log_fp, "OpenGL 3.0 not supported, the minimum requirement not meet.\n");
+        fprintf(fv->log_fp, "OpenGL 3.0 is not supported, the minimum requirement is not met.\n");
         goto FailExit;
     }
+
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_tex_size);
+    assert(max_tex_size >= 256); OPENGL_ERROR_ASSERT();
+    glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &max_renderbuffer_size);
+    if (max_tex_size > max_renderbuffer_size) max_tex_size = max_renderbuffer_size;
+
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
-    glGenFramebuffers(1, &gld->FBO_match);
-    glGenFramebuffers(1, &gld->FBO_reduction);
-    glGenFramebuffers(1, &gld->FBO_final);
+    glGenFramebuffers(1, &gld->FBO_pass1);
+    glGenFramebuffers(1, &gld->FBO_result);
 
+    // The source texture, used to contain the frame extracted from mediafile.
     gld->src_width = fv->output_w * fv->glyph_width;
     gld->src_height = fv->output_h * fv->glyph_height;
-    size = (size_t)gld->src_width * gld->src_height * 4;
 
     glGenTextures(1, &gld->src_texture);
     glBindTexture(GL_TEXTURE_2D, gld->src_texture);
@@ -564,326 +584,138 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, gld->src_width, gld->src_height, 0, GL_BGRA, GL_UNSIGNED_BYTE, 0);
+    OPENGL_ERROR_ASSERT();
 
+    // The PBO dedicated for the source texture for transferring
+    size = (size_t)gld->src_width * gld->src_height * 4;
     glGenBuffers(1, &gld->PBO_src);
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, gld->PBO_src);
     glBufferData(GL_PIXEL_UNPACK_BUFFER, size, NULL, GL_STATIC_DRAW);
 
-    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_tex_size);
-    assert(max_tex_size >= 1024); OPENGL_ERROR_ASSERT();
-    glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &max_renderbuffer_size);
-    if (max_tex_size > max_renderbuffer_size) max_tex_size = max_renderbuffer_size;
+    // The brightness texture:
+    // * The best brightness-match glyph index
+    // * The modulus of the source block for normalize
+    gld->brightness_width = fv->output_w;
+    gld->brightness_height = fv->output_h;
 
+    glGenTextures(1, &gld->brightness_index_texture);
+    glBindTexture(GL_TEXTURE_2D, gld->brightness_index_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32I, gld->brightness_width, gld->brightness_height, 0, GL_RED_INTEGER, GL_INT, 0);
+    OPENGL_ERROR_ASSERT();
+
+    glGenTextures(1, &gld->src_modulus_texture);
+    glBindTexture(GL_TEXTURE_2D, gld->src_modulus_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, gld->brightness_width, gld->brightness_height, 0, GL_RED, GL_FLOAT, 0);
+    OPENGL_ERROR_ASSERT();
+
+    glGenTextures(1, &gld->src_average_texture);
+    glBindTexture(GL_TEXTURE_2D, gld->src_average_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, gld->brightness_width, gld->brightness_height, 0, GL_BGR, GL_UNSIGNED_BYTE, 0);
+    OPENGL_ERROR_ASSERT();
+
+    // The font glyph matrix texture, stores the sorted glyph images (sorted by the brightness)
     size = (size_t)fv->glyph_matrix->Width * fv->glyph_matrix->Height * 4;
 
-    glGenBuffers(1, &pbo_font_matrix);
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_font_matrix);
+    glGenBuffers(1, &pbo_font_glyph_matrix);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_font_glyph_matrix);
     glBufferData(GL_PIXEL_UNPACK_BUFFER, size, NULL, GL_STATIC_DRAW);
     MapPtr = glMapBuffer(GL_PIXEL_UNPACK_BUFFER, GL_WRITE_ONLY);
     memcpy(MapPtr, fv->glyph_matrix->BitmapData, size);
     glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
 
-    glGenTextures(1, &gld->font_matrix_texture);
-    glBindTexture(GL_TEXTURE_2D, gld->font_matrix_texture);
+    glGenTextures(1, &gld->font_glyph_image_matrix_texture);
+    glBindTexture(GL_TEXTURE_2D, gld->font_glyph_image_matrix_texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, fv->glyph_matrix->Width, fv->glyph_matrix->Height, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+    OPENGL_ERROR_ASSERT();
+
+    // The font glyph brightness texture, stores the brightness value for each glyph
+    // Reuse the `pbo_font_glyph_matrix` to transfer because it's size is enough for a brightness matrix.
+    size = (size_t)fv->glyph_matrix_cols * fv->glyph_matrix_rows * 4;
+    MapPtr = glMapBuffer(GL_PIXEL_UNPACK_BUFFER, GL_WRITE_ONLY);
+    memcpy(MapPtr, fv->glyph_brightness, size);
+    glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
+
+    glGenTextures(1, &gld->font_glyph_brightness_matrix_texture);
+    glBindTexture(GL_TEXTURE_2D, gld->font_glyph_brightness_matrix_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, fv->glyph_matrix_cols, fv->glyph_matrix_rows, 0, GL_RED, GL_FLOAT, 0);
+    OPENGL_ERROR_ASSERT();
+
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-    glDeleteBuffers(1, &pbo_font_matrix);
+    glDeleteBuffers(1, &pbo_font_glyph_matrix);
 
-    match_width = fv->output_w;
-    match_height = fv->output_h;
-    inst_matrix_width = 1;
-    inst_matrix_height = 1;
-    size = (size_t)inst_matrix_width * inst_matrix_height;
-    while (size < fv->num_glyph_codes)
-    {
-        int loop_count = (int)(fv->num_glyph_codes / size);
-        if (loop_count < min_loop_count) break;
-        if (match_width > match_height)
-        {
-            int new_height = match_height + fv->output_h * 2;
-            if (new_height > max_tex_size) break;
-            match_height = new_height;
-            inst_matrix_height++;
-        }
-        else
-        {
-            int new_width = match_width + fv->output_w * 2;
-            if (new_width > max_tex_size) break;
-            match_width = new_width;
-            inst_matrix_width++;
-        }
-        size = (size_t)inst_matrix_width * inst_matrix_height;
-    }
+    // The result textures
+    gld->result_width = fv->output_w;
+    gld->result_height = fv->output_h;
+    size = (size_t)gld->result_width * gld->result_height;
 
-    gld->match_width = match_width;
-    gld->match_height = match_height;
-
-    glGenTextures(1, &gld->match_texture);
-    glBindTexture(GL_TEXTURE_2D, gld->match_texture);
+    glGenTextures(1, &gld->result_texture);
+    glBindTexture(GL_TEXTURE_2D, gld->result_texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG32F, gld->match_width, gld->match_height, 0, GL_RG, GL_FLOAT, 0);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32I, gld->result_width, gld->result_height, 0, GL_RED_INTEGER, GL_INT, 0);
     OPENGL_ERROR_ASSERT();
 
-    gld->match_shader = create_shader_program(fv->log_fp,
-        "#version 130\n"
-        "in vec2 vPosition;"
-        "void main()"
-        "{"
-        "   gl_Position = vec4(vPosition, 0.0, 1.0);"
-        "}"
-        ,
-        NULL,
-        "#version 130\n"
-        "precision highp float;"
-        "out vec2 Output;"
-        "uniform ivec2 Resolution;"
-        "uniform sampler2D FontMatrix;"
-        "uniform int FontMatrixCodeCount;"
-        "uniform ivec2 FontMatrixSize;"
-        "uniform ivec2 GlyphSize;"
-        "uniform ivec2 ConsoleSize;"
-        "uniform sampler2D SrcColor;"
-        "uniform int SrcInvert;"
-        "void main()"
-        "{"
-        "    ivec2 FragCoord = ivec2(gl_FragCoord.xy);"
-        "    ivec2 InstDim = Resolution / ConsoleSize;"
-        "    ivec2 InstCoord = FragCoord / ConsoleSize;"
-        "    ivec2 ConsoleCoord = FragCoord - (InstCoord * ConsoleSize);"
-        "    int inst_count = InstDim.x * InstDim.y;"
-        "    int InstID = InstCoord.x + InstCoord.y * InstDim.x;"
-        "    if (InstID >= FontMatrixCodeCount) discard;"
-        "    int BestGlyph = 0;"
-        "    float BestScore = -99999.0;"
-        "    ivec2 GraphicalCoord = ConsoleCoord * GlyphSize;"
-        "    for(int i = 0; i < FontMatrixCodeCount; i += inst_count)"
-        "    {"
-        "        int Glyph = (i + InstID);"
-        "        if (Glyph >= FontMatrixCodeCount) break;"
-        "        float Score = 0.0;"
-        "        float SrcMod = 0.0;"
-        "        float GlyphMod = 0.0;"
-        "        ivec2 GlyphPos = ivec2(Glyph % FontMatrixSize.x, Glyph / FontMatrixSize.x) * GlyphSize;"
-        "        for(int y = 0; y < GlyphSize.y; y++)"
-        "        {"
-        "            for(int x = 0; x < GlyphSize.x; x++)"
-        "            {"
-        "                ivec2 xy = ivec2(x, y);"
-        "                float SrcLum = length(texelFetch(SrcColor, GraphicalCoord + xy, 0).rgb);"
-        "                float GlyphLum = length(texelFetch(FontMatrix, GlyphPos + xy, 0).rgb);"
-        "                if (SrcInvert != 0) SrcLum = 1.0 - SrcLum;"
-        "                SrcLum -= 0.5;"
-        "                GlyphLum -= 0.5;"
-        "                Score += SrcLum * GlyphLum;"
-        "                SrcMod += SrcLum * SrcLum;"
-        "                GlyphMod += GlyphLum * GlyphLum;"
-        "            }"
-        "        }"
-        "        if (SrcMod >= 0.000001) Score /= SrcMod;"
-        "        if (GlyphMod >= 0.000001) Score /= GlyphMod;"
-        "        if (Score >= BestScore)"
-        "        {"
-        "            BestScore = Score;"
-        "            BestGlyph = Glyph;"
-        "        }"
-        "    }"
-        "    Output = vec2(BestScore, float(BestGlyph));"
-        "}"
-    );
-    if (!gld->match_shader) goto FailExit;
-    OPENGL_ERROR_ASSERT();
-
-    if (output_init_info)
-    {
-        int inst_count = inst_matrix_width * inst_matrix_height;
-        int loop_count = (int)(fv->num_glyph_codes / inst_count);
-        fprintf(fv->log_fp, "OpenGL Renderer: match size: %d x %d.\n", match_width, match_height);
-        fprintf(fv->log_fp, "Expected loop count '%d' for total code count %zu (%d x %d = %d tests run in a pass).\n", loop_count, fv->num_glyph_codes, inst_matrix_width, inst_matrix_height, inst_count);
-    }
-
-    gld->reduction_width = match_width;
-    gld->reduction_height = match_height;
-
-    glGenTextures(1, &gld->reduction_texture1);
-    glBindTexture(GL_TEXTURE_2D, gld->reduction_texture1);
+    glGenTextures(1, &gld->result_texture_c);
+    glBindTexture(GL_TEXTURE_2D, gld->result_texture_c);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG32F, gld->reduction_width, gld->reduction_height, 0, GL_RG, GL_FLOAT, 0);
-    OPENGL_ERROR_ASSERT();
-
-    glGenTextures(1, &gld->reduction_texture2);
-    glBindTexture(GL_TEXTURE_2D, gld->reduction_texture2);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG32F, gld->reduction_width, gld->reduction_height, 0, GL_RG, GL_FLOAT, 0);
-    OPENGL_ERROR_ASSERT();
-
-    gld->reduction_shader = create_shader_program(fv->log_fp,
-        "#version 130\n"
-        "in vec2 vPosition;"
-        "void main()"
-        "{"
-        "   gl_Position = vec4(vPosition, 0.0, 1.0);"
-        "}"
-        ,
-        NULL,
-        "#version 130\n"
-        "precision highp float;"
-        "out vec2 Output;"
-        "uniform ivec2 Resolution;"
-        "uniform ivec2 ConsoleSize;"
-        "uniform sampler2D ReductionTex;"
-        "uniform ivec2 ReductionSize;"
-        "void main()"
-        "{"
-        "    ivec2 FragCoord = ivec2(gl_FragCoord.xy);"
-        "    ivec2 InstCoord = FragCoord / ConsoleSize;"
-        "    ivec2 ConsoleCoord = FragCoord - (InstCoord * ConsoleSize);"
-        "    ivec2 SrcInstCoord = InstCoord * ReductionSize;"
-        "    float BestScore = -9999999.9;"
-        "    int BestGlyph = 0;"
-        "    for(int y = 0; y < ReductionSize.y; y++)"
-        "    {"
-        "        for(int x = 0; x < ReductionSize.x; x++)"
-        "        {"
-        "            ivec2 xy = ivec2(x, y);"
-        "            vec2 Data = texelFetch(ReductionTex, (SrcInstCoord + xy) * ConsoleSize + ConsoleCoord, 0).rg;"
-        "            if (Data.x >= BestScore)"
-        "            {"
-        "                BestScore = Data.x;"
-        "                BestGlyph = int(Data.y);"
-        "            }"
-        "        }"
-        "    }"
-        ""
-        "    Output = vec2(BestScore, float(BestGlyph));"
-        "}"
-    );
-    if (!gld->reduction_shader) goto FailExit;
-    OPENGL_ERROR_ASSERT();
-
-    gld->final_width = fv->output_w;
-    gld->final_height = fv->output_h;
-    size = (size_t)gld->final_width * gld->final_height;
-
-    glGenTextures(1, &gld->final_texture);
-    glBindTexture(GL_TEXTURE_2D, gld->final_texture);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32I, gld->final_width, gld->final_height, 0, GL_RED_INTEGER, GL_INT, 0);
-    OPENGL_ERROR_ASSERT();
-
-    glGenTextures(1, &gld->final_texture_c);
-    glBindTexture(GL_TEXTURE_2D, gld->final_texture_c);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8I, gld->final_width, gld->final_height, 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, 0);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8I, gld->result_width, gld->result_height, 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, 0);
     OPENGL_ERROR_ASSERT();
 
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    glGenBuffers(1, &gld->PBO_final);
-    glBindBuffer(GL_PIXEL_PACK_BUFFER, gld->PBO_final);
+    glGenBuffers(1, &gld->PBO_result);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, gld->PBO_result);
     glBufferData(GL_PIXEL_PACK_BUFFER, size * 4, NULL, GL_STATIC_DRAW);
     OPENGL_ERROR_ASSERT();
 
-    glGenBuffers(1, &gld->PBO_final_c);
-    glBindBuffer(GL_PIXEL_PACK_BUFFER, gld->PBO_final_c);
+    glGenBuffers(1, &gld->PBO_result_c);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, gld->PBO_result_c);
     glBufferData(GL_PIXEL_PACK_BUFFER, size, NULL, GL_STATIC_DRAW);
     OPENGL_ERROR_ASSERT();
 
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 
-    gld->final_shader = create_shader_program(fv->log_fp,
-        "#version 130\n"
-        "in vec2 vPosition;"
-        "void main()"
-        "{"
-        "   gl_Position = vec4(vPosition, 0.0, 1.0);"
-        "}"
-        ,
+    gld->common_vsh_source = load_text_file("assets"SUBDIR"common.vsh");
+    gld->pass1_shader_source = load_text_file("assets"SUBDIR"pass1.fsh");
+    gld->result_shader_source = load_text_file("assets"SUBDIR"result.fsh");
+
+    gld->pass1_shader = create_shader_program(fv->log_fp,
+        gld->common_vsh_source,
         NULL,
-        "#version 130\n"
-        "precision highp float;"
-        "out int Output;"
-        "out int Color;"
-        "uniform ivec2 Resolution;"
-        "uniform sampler2D ReductionTex;"
-        "uniform ivec2 GlyphSize;"
-        "uniform ivec2 ConsoleSize;"
-        "uniform sampler2D SrcColor;"
-        "uniform int SrcInvert;"
-        "uniform vec3 Palette[16] = vec3[16]"
-        "("
-        "    vec3(0.0, 0.0, 0.0),"
-        "    vec3(0.0, 0.0, 0.5),"
-        "    vec3(0.0, 0.5, 0.0),"
-        "    vec3(0.0, 0.5, 0.5),"
-        "    vec3(0.5, 0.0, 0.0),"
-        "    vec3(0.5, 0.0, 0.5),"
-        "    vec3(0.5, 0.5, 0.0),"
-        "    vec3(0.5, 0.5, 0.5),"
-        "    vec3(0.3, 0.3, 0.3),"
-        "    vec3(0.0, 0.0, 1.0),"
-        "    vec3(0.0, 1.0, 0.0),"
-        "    vec3(0.0, 1.0, 1.0),"
-        "    vec3(1.0, 0.0, 0.0),"
-        "    vec3(1.0, 0.0, 1.0),"
-        "    vec3(1.0, 1.0, 0.0),"
-        "    vec3(1.0, 1.0, 1.0)"
-        ");"
-        "void main()"
-        "{"
-        "    ivec2 FragCoord = ivec2(gl_FragCoord.xy);"
-        "    vec2 Data = texelFetch(ReductionTex, FragCoord, 0).rg;"
-        "    float BestScore = Data.x;"
-        "    int BestGlyph = int(Data.y);"
-        "    vec3 AvrColor = vec3(0);"
-        "    ivec2 BaseCoord = FragCoord * GlyphSize;"
-        "    int PixelCount = GlyphSize.x * GlyphSize.y;"
-        "    for(int y = 0; y < GlyphSize.y; y++)"
-        "    {"
-        "        for(int x = 0; x < GlyphSize.x; x++)"
-        "        {"
-        "            ivec2 xy = ivec2(x, y);"
-        "            AvrColor += texelFetch(SrcColor, BaseCoord + xy, 0).rgb;"
-        "        }"
-        "    }"
-        "    AvrColor /= PixelCount;"
-        "    if (SrcInvert != 0) AvrColor = vec3(1) - AvrColor;"
-        "    Output = BestGlyph;"
-        "    Color = 0;"
-        "    float ColorMinScore = -9999999.9;"
-        "    for(int i = 0; i < 16; i++)"
-        "    {"
-        "        vec3 TV1 = normalize(AvrColor - vec3(0.5));"
-        "        vec3 TV2 = normalize(Palette[i].bgr - vec3(0.5));"
-        "        float ColorScore = dot(TV1, TV2);"
-        "        if (ColorScore >= ColorMinScore)"
-        "        {"
-        "            ColorMinScore = ColorScore;"
-        "            Color = i;"
-        "        }"
-        "    }"
-        "    if (Color == 0) Color = 8;"
-        "}"
+        gld->pass1_shader_source
     );
-    if (!gld->final_shader) goto FailExit;
+
+    gld->result_shader = create_shader_program(fv->log_fp,
+        gld->common_vsh_source,
+        NULL,
+        gld->result_shader_source
+    );
+    if (!gld->result_shader) goto FailExit;
     OPENGL_ERROR_ASSERT();
 
     glGenVertexArrays(1, &gld->Quad_VAO);
@@ -902,21 +734,7 @@ static opengl_data_p opengl_data_create(fontvideo_p fv, int output_init_info)
     glUnmapBuffer(GL_ARRAY_BUFFER);
     OPENGL_ERROR_ASSERT();
 
-    Location = glGetAttribLocation(gld->match_shader, "vPosition");
-    if (Location >= 0)
-    {
-        glEnableVertexAttribArray(Location);
-        glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], (void *)0);
-    }
-
-    Location = glGetAttribLocation(gld->reduction_shader, "vPosition");
-    if (Location >= 0)
-    {
-        glEnableVertexAttribArray(Location);
-        glVertexAttribPointer(Location, 2, GL_FLOAT, GL_FALSE, sizeof Quad_Vertex[0], (void *)0);
-    }
-
-    Location = glGetAttribLocation(gld->final_shader, "vPosition");
+    Location = glGetAttribLocation(gld->result_shader, "vPosition");
     if (Location >= 0)
     {
         glEnableVertexAttribArray(Location);
@@ -1428,7 +1246,7 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
 }
 #endif
 
-static int sort_glyph_codes_by_luminance(fontvideo_p fv);
+static int sort_glyph_codes_by_brightness(fontvideo_p fv);
 
 // Load font metadata and config
 static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
@@ -1571,8 +1389,10 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
     if (fv->candidate_glyph_window_size < 1) fv->candidate_glyph_window_size = 1;
     else if (fv->candidate_glyph_window_size > fv->num_glyph_codes) fv->candidate_glyph_window_size = (int)fv->num_glyph_codes;
 
-    fv->glyph_vertical_array = calloc(fv->num_glyph_codes * glyph_pixel_count, sizeof fv->glyph_vertical_array[0]);
-    fv->glyph_brightness = calloc(fv->num_glyph_codes, sizeof fv->glyph_brightness[0]);
+    // Use `expected_font_code_count` rather than `fv->num_glyph_codes` for paddings.
+    // The paddings can help initialize the OpenGL method easier.
+    fv->glyph_vertical_array = calloc(expected_font_code_count * glyph_pixel_count, sizeof fv->glyph_vertical_array[0]);
+    fv->glyph_brightness = calloc(expected_font_code_count, sizeof fv->glyph_brightness[0]);
     if (!fv->glyph_vertical_array || !fv->glyph_brightness)
     {
         fprintf(log_fp, "Could not calculate font glyph lum values: %s\n", strerror(errno));
@@ -1622,7 +1442,7 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
 
     free(font_raw_code);
     dict_delete(d_meta);
-    return sort_glyph_codes_by_luminance(fv);
+    return sort_glyph_codes_by_brightness(fv);
 FailExit:
     if (fp_code) fclose(fp_code);
     free(font_raw_code);
@@ -1652,7 +1472,7 @@ static int cl_compare(const void *p1, const void *p2)
     return 0;
 }
 
-int sort_glyph_codes_by_luminance(fontvideo_p fv)
+int sort_glyph_codes_by_brightness(fontvideo_p fv)
 {
     ptrdiff_t i;
     code_lum_p cl_array = NULL;
@@ -1660,6 +1480,7 @@ int sort_glyph_codes_by_luminance(fontvideo_p fv)
     UniformBitmap_p sorted_gm = NULL;
     size_t num_glyph_codes;
     size_t glyph_pixel_count;
+    float glyph_brightness_max, glyph_brightness_min, glyph_brightness_range;
 
     num_glyph_codes = fv->num_glyph_codes;
     glyph_pixel_count = (size_t)fv->glyph_width * fv->glyph_height;
@@ -1710,18 +1531,20 @@ int sort_glyph_codes_by_luminance(fontvideo_p fv)
 
         for (y = 0; y < fv->glyph_height; y++)
         {
-            // uint32_t x;
-            // for (x = 0; x < fv->glyph_width; x++)
-            // {
-            //     uint8_t c = 255 * (glyph_array[glyph_pixel_count * i + y * fv->glyph_width + x]);
-            //     sorted_gm->RowPointers[gm_dy + y][gm_dx + x] = DEBUG_BGRX(c, c, c);
-            // }
             memcpy(&sorted_gm->RowPointers[gm_dy + y][gm_dx], &fv->glyph_matrix->RowPointers[gm_sy + y][gm_sx], fv->glyph_width * sizeof(uint32_t));
         }
     }
 
-    fv->glyph_brightness_min = fv->glyph_brightness[0];
-    fv->glyph_brightness_max = fv->glyph_brightness[num_glyph_codes - 1];
+    glyph_brightness_min = fv->glyph_brightness[0];
+    glyph_brightness_max = fv->glyph_brightness[num_glyph_codes - 1];
+    glyph_brightness_range = glyph_brightness_max - glyph_brightness_min;
+
+    // Instead of clamping the brightness, we scale the src_brightness to fit the capacity.
+#pragma omp parallel for
+    for (i = 0; i < (ptrdiff_t)num_glyph_codes; i++)
+    {
+        fv->glyph_brightness[i] = (fv->glyph_brightness[i] - glyph_brightness_min) / glyph_brightness_range;
+    }
 
     UB_Free(&fv->glyph_matrix);
     fv->glyph_matrix = sorted_gm;
@@ -1915,12 +1738,10 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                 palette[i].rgb.b * palette[i].rgb.b);
 
             // Do normalize
-            if (length >= 0.000001f)
-            {
-                palette[i].rgb.r /= length;
-                palette[i].rgb.g /= length;
-                palette[i].rgb.b /= length;
-            }
+            if (length < 0.000001f) length = 1;
+            palette[i].rgb.r /= length;
+            palette[i].rgb.g /= length;
+            palette[i].rgb.b /= length;
         }
         palette_initialized = 1;
     }
@@ -1951,7 +1772,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             uint8_t col = 0;
             sx = fx * fv->glyph_width;
 
-            // Compute source luminance for further use
+            // Compute source brightness for further use
             for (y = 0; y < (int)fv->glyph_height; y++)
             {
                 uint32_t *raw_row = f->raw_data_row[sy + y];
@@ -1980,8 +1801,6 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             src_normalize = sqrt(src_normalize);
             if (src_normalize < 0.000001) src_normalize = 1;
 
-            // Instead of clamping the brightness, we scale the src_brightness to fit the capacity.
-            src_brightness = fv->glyph_brightness_min + src_brightness * (fv->glyph_brightness_max - fv->glyph_brightness_min);
             if (1)
             {
                 int32_t half_window = fv->candidate_glyph_window_size / 2 + 1;
@@ -2156,24 +1975,21 @@ static int do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_
     GLint Location;
     size_t size;
     void *MapPtr;
-    GLenum DrawBuffers[2] = {0};
-    GLuint FBO_match = gld->FBO_match;
-    GLuint FBO_reduction = gld->FBO_reduction;
-    GLuint FBO_final = gld->FBO_final;
+    GLenum DrawBuffers[3] = {0};
+    GLuint FBO_pass1 = gld->FBO_pass1;
+    GLuint FBO_result = gld->FBO_result;
     GLuint src_texture = gld->src_texture;
-    GLuint match_texture = gld->match_texture;
-    GLuint final_texture = gld->final_texture;
-    GLuint final_texture_c = gld->final_texture_c;
-    GLuint reduction_tex1 = gld->reduction_texture1;
-    GLuint reduction_tex2 = gld->reduction_texture2;
+    GLuint src_modulus_texture = gld->src_modulus_texture;
+    GLuint src_average_texture = gld->src_average_texture;
+    GLuint brightness_index_texture = gld->brightness_index_texture;
+    GLuint result_texture = gld->result_texture;
+    GLuint result_texture_c = gld->result_texture_c;
+    GLuint font_glyph_image_matrix_texture = gld->font_glyph_image_matrix_texture;
+    GLuint font_glyph_brightness_matrix_texture = gld->font_glyph_brightness_matrix_texture;
     GLenum err_code = GL_NO_ERROR;
-    int reduction_src_width;
-    int reduction_src_height;
-    int reduction_dst_width;
-    int reduction_dst_height;
-    int reduction_pass = 0;
     int retval = 1;
     int err_line = __LINE__;
+    int ci;
 
     if (fv->verbose)
     {
@@ -2183,9 +1999,12 @@ static int do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_
     if (fv->normalize_input) frame_normalize_input(f);
 
     // First step: issuing a rough matching with massive instances and a small number of glyphs to match.
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO_match);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO_pass1);
     OPENGL_ERROR_ASSERT();
 
+    glUseProgram(gld->pass1_shader);
+
+    // Upload the frame
     size = (size_t)f->raw_w * f->raw_h * 4;
 
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, gld->PBO_src);
@@ -2199,225 +2018,132 @@ static int do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_
 
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 
-    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, match_texture, 0);
+    // Run pass 1
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, brightness_index_texture, 0);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, src_modulus_texture, 0);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, src_average_texture, 0);
     DrawBuffers[0] = GL_COLOR_ATTACHMENT0;
-    glDrawBuffers(1, DrawBuffers);
-    glViewport(0, 0, gld->match_width, gld->match_height);
-    glBindFragDataLocation(gld->match_shader, 0, "Output");
+    DrawBuffers[1] = GL_COLOR_ATTACHMENT1;
+    DrawBuffers[2] = GL_COLOR_ATTACHMENT2;
+    glDrawBuffers(3, DrawBuffers);
+    glBindFragDataLocation(gld->pass1_shader, 0, "BrightnessIndex");
+    glBindFragDataLocation(gld->pass1_shader, 1, "ModulusValue");
+    glBindFragDataLocation(gld->pass1_shader, 2, "AverageColor");
 
     if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) goto FBONotCompleteExit;
     OPENGL_ERROR_ASSERT();
 
-    glUseProgram(gld->match_shader);
+    glViewport(0, 0, fv->output_w, fv->output_h);
 
-    Location = glGetUniformLocation(gld->match_shader, "Resolution");
-    if (Location >= 0) glUniform2i(Location, gld->match_width, gld->match_height);
+    Location = glGetUniformLocation(gld->pass1_shader, "iGlyphSize");
+    if (Location >= 0) glUniform2i(Location, fv->glyph_width, fv->glyph_height);
 
-    Location = glGetUniformLocation(gld->match_shader, "FontMatrix");
+    Location = glGetUniformLocation(gld->pass1_shader, "iGlyphMatrixSize");
+    if (Location >= 0) glUniform2i(Location, fv->glyph_matrix_cols, fv->glyph_matrix_rows);
+
+    Location = glGetUniformLocation(gld->pass1_shader, "iSrcColor");
     if (Location >= 0)
     {
-        glActiveTexture(GL_TEXTURE0 + 0); glBindTexture(GL_TEXTURE_2D, gld->font_matrix_texture);
+        glActiveTexture(GL_TEXTURE0 + 0); glBindTexture(GL_TEXTURE_2D, gld->src_texture);
         glUniform1i(Location, 0);
     }
 
-    Location = glGetUniformLocation(gld->match_shader, "FontMatrixCodeCount");
-    if (Location >= 0) glUniform1i(Location, (GLint)fv->num_glyph_codes);
-
-    Location = glGetUniformLocation(gld->match_shader, "FontMatrixSize");
-    if (Location >= 0) glUniform2i(Location, fv->glyph_matrix_cols, fv->glyph_matrix_rows);
-
-    Location = glGetUniformLocation(gld->match_shader, "GlyphSize");
-    if (Location >= 0) glUniform2i(Location, fv->glyph_width, fv->glyph_height);
-
-    Location = glGetUniformLocation(gld->match_shader, "ConsoleSize");
-    if (Location >= 0) glUniform2i(Location, fv->output_w, fv->output_h);
-
-    Location = glGetUniformLocation(gld->match_shader, "SrcColor");
+    Location = glGetUniformLocation(gld->pass1_shader, "iGlyphBrightnessMatrix");
     if (Location >= 0)
     {
-        glActiveTexture(GL_TEXTURE0 + 1); glBindTexture(GL_TEXTURE_2D, gld->src_texture);
+        glActiveTexture(GL_TEXTURE0 + 1); glBindTexture(GL_TEXTURE_2D, gld->font_glyph_brightness_matrix_texture);
         glUniform1i(Location, 1);
     }
-
-    Location = glGetUniformLocation(gld->match_shader, "SrcInvert");
-    if (Location >= 0) glUniform1i(Location, fv->do_color_invert);
 
     glBindVertexArray(gld->Quad_VAO);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     OPENGL_ERROR_ASSERT();
 
-    // Second step: merge instances for filtering the highest scores.
-    reduction_tex1 = match_texture;
-    reduction_tex2 = gld->reduction_texture1;
-    reduction_src_width = gld->reduction_width;
-    reduction_src_height = gld->reduction_height;
-    reduction_pass = 0;
-    while(1)
-    {
-        const int max_reduction_scale = 32;
-        int src_instmat_w = 0;
-        int src_instmat_h = 0;
-        int dst_instmat_w = 0;
-        int dst_instmat_h = 0;
-        int reduction_x = 0;
-        int reduction_y = 0;
-        int i;
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO_result);
 
-        reduction_pass++;
-
-        reduction_dst_width = 0;
-        reduction_dst_height = 0;
-
-        src_instmat_w = reduction_src_width / gld->final_width;
-        src_instmat_h = reduction_src_height / gld->final_height;
-
-        if (src_instmat_w == 1 &&
-            src_instmat_h == 1) break;
-
-        if (src_instmat_w > 1)
-        {
-            for (i = 2; i < max_reduction_scale; i++)
-            {
-                if (!(src_instmat_w % i))
-                {
-                    reduction_x = i;
-                    dst_instmat_w = src_instmat_w / i;
-                    reduction_dst_width = dst_instmat_w * gld->final_width;
-                    break;
-                }
-            }
-        }
-        if (!reduction_dst_width)
-        {
-            reduction_x = (reduction_src_width - 1) / gld->final_width + 1;
-            dst_instmat_w = 1;
-            reduction_dst_width = dst_instmat_w * gld->final_width;
-        }
-
-        if (src_instmat_h > 1)
-        {
-            for (i = 2; i < max_reduction_scale; i++)
-            {
-                if (!(src_instmat_h % i))
-                {
-                    reduction_y = i;
-                    dst_instmat_h = src_instmat_h / i;
-                    reduction_dst_height = dst_instmat_h * gld->final_height;
-                    break;
-                }
-            }
-        }
-        if (!reduction_dst_height)
-        {
-            reduction_y = (reduction_src_height - 1) / gld->final_height + 1;
-            dst_instmat_h = 1;
-            reduction_dst_height = dst_instmat_h * gld->final_height;
-        }
-
-        if (fv->verbose && gld->output_info)
-        {
-            fprintf(fv->log_fp, "OpenGL Renderer: passing reduction %d from size %dx%d (%dx%d) to %dx%d (%dx%d) by %dx%d.\n",
-                reduction_pass,
-                reduction_src_width, reduction_src_height,
-                src_instmat_w, src_instmat_h,
-                reduction_dst_width, reduction_dst_height,
-                dst_instmat_w, dst_instmat_h,
-                reduction_x, reduction_y);
-        }
-
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO_reduction);
-
-        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, reduction_tex2, 0);
-        DrawBuffers[0] = GL_COLOR_ATTACHMENT0;
-        glDrawBuffers(1, DrawBuffers);
-        glViewport(0, 0, reduction_dst_width, reduction_dst_height);
-        glBindFragDataLocation(gld->reduction_shader, 0, "Output");
-
-        if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) goto FBONotCompleteExit;
-
-        glUseProgram(gld->reduction_shader);
-
-        Location = glGetUniformLocation(gld->reduction_shader, "Resolution"); // assert(Location >= 0);
-        glUniform2i(Location, reduction_dst_width, reduction_dst_height);
-
-        Location = glGetUniformLocation(gld->reduction_shader, "ConsoleSize"); // assert(Location >= 0);
-        glUniform2i(Location, fv->output_w, fv->output_h);
-
-        Location = glGetUniformLocation(gld->reduction_shader, "ReductionTex"); // assert(Location >= 0);
-        glActiveTexture(GL_TEXTURE0 + 1); glBindTexture(GL_TEXTURE_2D, reduction_tex1);
-        glUniform1i(Location, 1);
-
-        Location = glGetUniformLocation(gld->reduction_shader, "ReductionSize"); // assert(Location >= 0);
-        glUniform2i(Location, reduction_x, reduction_y);
-
-        glBindVertexArray(gld->Quad_VAO);
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        OPENGL_ERROR_ASSERT();
-
-        reduction_src_width = reduction_dst_width;
-        reduction_src_height = reduction_dst_height;
-        if (reduction_tex1 == match_texture)
-        {
-            reduction_tex1 = gld->reduction_texture1;
-            reduction_tex2 = gld->reduction_texture2;
-        }
-        else
-        {
-            GLuint temp = reduction_tex1;
-            reduction_tex1 = reduction_tex2;
-            reduction_tex2 = temp;
-        }
-    }
-
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO_final);
-
-    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, final_texture, 0);
-    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, final_texture_c, 0);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, result_texture, 0);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, result_texture_c, 0);
     DrawBuffers[0] = GL_COLOR_ATTACHMENT0;
     DrawBuffers[1] = GL_COLOR_ATTACHMENT1;
     glDrawBuffers(2, DrawBuffers);
-    glViewport(0, 0, gld->final_width, gld->final_height);
-    glBindFragDataLocation(gld->final_shader, 0, "Output");
-    glBindFragDataLocation(gld->final_shader, 1, "Color");
+    glViewport(0, 0, gld->result_width, gld->result_height);
+    glBindFragDataLocation(gld->result_shader, 0, "Index");
+    glBindFragDataLocation(gld->result_shader, 1, "Color");
 
     if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) goto FBONotCompleteExit;
 
-    glUseProgram(gld->final_shader);
+    glUseProgram(gld->result_shader);
 
-    Location = glGetUniformLocation(gld->final_shader, "Resolution");
-    if (Location >= 0) glUniform2i(Location, gld->final_width, gld->final_height);
+    Location = glGetUniformLocation(gld->result_shader, "iBrightnessWindowSize");
+    if (Location >= 0) glUniform1i(Location, fv->candidate_glyph_window_size);
 
-    Location = glGetUniformLocation(gld->final_shader, "ReductionTex");
-    if (Location >= 0)
-    {
-        glActiveTexture(GL_TEXTURE0 + 2); glBindTexture(GL_TEXTURE_2D, reduction_tex1);
-        glUniform1i(Location, 2);
-    }
+    Location = glGetUniformLocation(gld->result_shader, "iNumCodes");
+    if (Location >= 0) glUniform1i(Location, fv->num_glyph_codes);
 
-    Location = glGetUniformLocation(gld->final_shader, "GlyphSize");
+    Location = glGetUniformLocation(gld->result_shader, "iSrcInvert");
+    if (Location >= 0) glUniform1i(Location, fv->do_color_invert);
+
+    Location = glGetUniformLocation(gld->result_shader, "iGlyphSize");
     if (Location >= 0) glUniform2i(Location, fv->glyph_width, fv->glyph_height);
 
-    Location = glGetUniformLocation(gld->final_shader, "ConsoleSize");
-    if (Location >= 0) glUniform2i(Location, fv->output_w, fv->output_h);
+    Location = glGetUniformLocation(gld->result_shader, "iGlyphMatrixSize");
+    if (Location >= 0) glUniform2i(Location, fv->glyph_matrix_cols, fv->glyph_matrix_rows);
 
-    Location = glGetUniformLocation(gld->final_shader, "SrcColor");
+    Location = glGetUniformLocation(gld->result_shader, "iSrcColor");
     if (Location >= 0)
     {
-        glActiveTexture(GL_TEXTURE0 + 1); glBindTexture(GL_TEXTURE_2D, gld->src_texture);
+        glActiveTexture(GL_TEXTURE0 + 0); glBindTexture(GL_TEXTURE_2D, src_texture);
+        glUniform1i(Location, 0);
+    }
+
+    Location = glGetUniformLocation(gld->result_shader, "iAvrColor");
+    if (Location >= 0)
+    {
+        glActiveTexture(GL_TEXTURE0 + 1); glBindTexture(GL_TEXTURE_2D, src_average_texture);
         glUniform1i(Location, 1);
     }
 
-    Location = glGetUniformLocation(gld->final_shader, "SrcInvert");
-    if (Location >= 0) glUniform1i(Location, fv->do_color_invert);
+    Location = glGetUniformLocation(gld->result_shader, "iGlyphImageMatrix");
+    if (Location >= 0)
+    {
+        glActiveTexture(GL_TEXTURE0 + 2); glBindTexture(GL_TEXTURE_2D, font_glyph_image_matrix_texture);
+        glUniform1i(Location, 2);
+    }
+
+    Location = glGetUniformLocation(gld->result_shader, "iBrightnessIndex");
+    if (Location >= 0)
+    {
+        glActiveTexture(GL_TEXTURE0 + 3); glBindTexture(GL_TEXTURE_2D, brightness_index_texture);
+        glUniform1i(Location, 3);
+    }
+
+    Location = glGetUniformLocation(gld->result_shader, "iModulusValue");
+    if (Location >= 0)
+    {
+        glActiveTexture(GL_TEXTURE0 + 4); glBindTexture(GL_TEXTURE_2D, src_modulus_texture);
+        glUniform1i(Location, 4);
+    }
+
+    for (ci = 0; ci < 16; ci++)
+    {
+        char paletteNameBuf[64];
+        snprintf(paletteNameBuf, sizeof paletteNameBuf, "iPalette[%d]", ci);
+        Location = glGetUniformLocation(gld->result_shader, paletteNameBuf);
+        assert(Location >= 0);
+        glUniform3f(Location,
+            console_palette[ci].rgb.r / 255.0f,
+            console_palette[ci].rgb.g / 255.0f,
+            console_palette[ci].rgb.b / 255.0f);
+    }
 
     glBindVertexArray(gld->Quad_VAO);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 
-    glActiveTexture(GL_TEXTURE0 + 3);
-    glBindTexture(GL_TEXTURE_2D, final_texture);
-    size = (size_t)gld->final_width * gld->final_height * 4;
-    glBindBuffer(GL_PIXEL_PACK_BUFFER, gld->PBO_final);
+    glActiveTexture(GL_TEXTURE0 + 5);
+    glBindTexture(GL_TEXTURE_2D, result_texture);
+    size = (size_t)gld->result_width * gld->result_height * 4;
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, gld->PBO_result);
     glGetTexImage(GL_TEXTURE_2D, 0, GL_RED_INTEGER, GL_INT, NULL);
     OPENGL_ERROR_ASSERT();
 
@@ -2426,7 +2152,7 @@ static int do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_
     glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
     OPENGL_ERROR_ASSERT();
 
-    size = (size_t)gld->final_width * gld->final_height;
+    size = (size_t)gld->result_width * gld->result_height;
     retval = 0;
     if (size)
     {
@@ -2445,10 +2171,10 @@ static int do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_
         goto BlackScreenFailExit;
     }
 
-    glActiveTexture(GL_TEXTURE0 + 4);
-    glBindTexture(GL_TEXTURE_2D, final_texture_c);
-    size = (size_t)gld->final_width * gld->final_height;
-    glBindBuffer(GL_PIXEL_PACK_BUFFER, gld->PBO_final_c);
+    glActiveTexture(GL_TEXTURE0 + 6);
+    glBindTexture(GL_TEXTURE_2D, result_texture_c);
+    size = (size_t)gld->result_width * gld->result_height;
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, gld->PBO_result_c);
     OPENGL_ERROR_ASSERT();
     glGetTexImage(GL_TEXTURE_2D, 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, NULL);
     OPENGL_ERROR_ASSERT();

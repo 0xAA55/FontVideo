@@ -119,9 +119,6 @@ typedef struct fontvideo_struct
     // Assets: the calculated average luminance in [0, 1] for each glyph
     float* glyph_brightness;
 
-    // Assets: the max brightness and the min brightness
-    float glyph_brightness_max, glyph_brightness_min;
-
     // Assets: is the glyphs all full-width?
     int font_is_wide;
 
