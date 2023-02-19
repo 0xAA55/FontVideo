@@ -1938,21 +1938,12 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                     avr_r * palette[i].rgb.r +
                     avr_g * palette[i].rgb.g +
                     avr_b * palette[i].rgb.b;
-                if (score >= best_score)
+                // Use lowered precision to match OpenGL implementation
+                if ((int)(score * 255) >= (int)(best_score * 255))
                 {
                     best_score = score;
                     col = (uint8_t)i;
                 }
-                // float
-                //     dx = avr_r - palette[i].rgb.r,
-                //     dy = avr_g - palette[i].rgb.g,
-                //     dz = avr_b - palette[i].rgb.b;
-                // float dist = dx * dx + dy * dy + dz * dz;
-                // if (dist <= best_score)
-                // {
-                //     best_score = dist;
-                //     col = (uint8_t)i;
-                // }
             }
 
             // Avoid generating pure black characters.
