@@ -79,7 +79,7 @@ void main()
 	}
 	vec3 avrColorVector = normalize(texelFetch(iAvrColor, outputXY, 0).rgb - vec3(0.5));
 	if (iSrcInvert != 0) avrColorVector = -avrColorVector;
-	int bestColor = 0;
+	int bestColor = 8;
 	float bestColorScore = -9999999.0;
 	for(int i = 0; i < 16; i++)
 	{
@@ -89,7 +89,6 @@ void main()
 			bestColor = i;
 			bestColorScore = score;
 		}
-		if (bestColor == 0) bestColor = 8;
 	}
 	Index = bestCode;
 	Color = bestColor;

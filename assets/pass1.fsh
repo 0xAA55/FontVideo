@@ -23,7 +23,7 @@ void main()
     ivec2 Orig = ivec2(gl_FragCoord.xy) * iGlyphSize;
     float l = 0;
     float modulus = 0;
-    vec3 avrColor = vec3(0);
+    vec3 colorSum = vec3(0);
     float numPixels = float(iGlyphSize.x * iGlyphSize.y);
     for(int y = 0; y < iGlyphSize.y; y++)
     {
@@ -31,7 +31,7 @@ void main()
         {
             ivec2 xy = ivec2(x, y);
             vec3 sample_rgb = texelFetch(iSrcColor, Orig + xy, 0).rgb;
-            avrColor += sample_rgb;
+            colorSum += sample_rgb;
             float sample_brg = length(sample_rgb) / sqrt_3;
             l += sample_brg;
             sample_brg -= 0.5;
@@ -39,7 +39,6 @@ void main()
         }
     }
     float brightness = l / numPixels;
-    avrColor /= numPixels;
     int left = 0;
     int right = iGlyphMatrixSize.x * iGlyphMatrixSize.y - 1;
     int mid = iGlyphMatrixSize.x * iGlyphMatrixSize.y / 2;
@@ -71,6 +70,6 @@ void main()
 
     BrightnessIndex = left;
     ModulusValue = sqrt(modulus);
-    AverageColor = avrColor;
+    AverageColor = colorSum / numPixels;
 }
 
