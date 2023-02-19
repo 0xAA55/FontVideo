@@ -1395,7 +1395,7 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
     fv->glyph_brightness = calloc(expected_font_code_count, sizeof fv->glyph_brightness[0]);
     if (!fv->glyph_vertical_array || !fv->glyph_brightness)
     {
-        fprintf(log_fp, "Could not calculate font glyph lum values: %s\n", strerror(errno));
+        fprintf(log_fp, "Could not calculate font glyph brightness values: %s\n", strerror(errno));
         goto FailExit;
     }
 
@@ -1407,12 +1407,12 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
         uint32_t x, y;
         int srcx = (int)((si % fv->glyph_matrix_cols) * fv->glyph_width);
         int srcy = (int)((si / fv->glyph_matrix_cols) * fv->glyph_height);
-        float *lum_of_glyph = &fv->glyph_vertical_array[si * glyph_pixel_count];
+        float *brightness_of_glyph = &fv->glyph_vertical_array[si * glyph_pixel_count];
         float glyph_brightness = 0;
         for (y = 0; y < fv->glyph_height; y++)
         {
             uint32_t *row = gm->RowPointers[srcy + y];
-            float *lum_row = &lum_of_glyph[y * fv->glyph_width];
+            float *brightness_row = &brightness_of_glyph[y * fv->glyph_width];
             for (x = 0; x < fv->glyph_width; x++)
             {
                 union pixel
@@ -1422,18 +1422,18 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
                     float f32;
                 }   *gp = (void *)&(row[srcx + x]);
                 float gp_r, gp_g, gp_b;
-                float gp_lum;
+                float gp_brightness;
                 gp_b = (float)gp->u8[0] / 255.0f;
                 gp_g = (float)gp->u8[1] / 255.0f;
                 gp_r = (float)gp->u8[2] / 255.0f;
-                gp_lum = (float)(sqrt(gp_r * gp_r + gp_g * gp_g + gp_b * gp_b) / sqrt_3);
+                gp_brightness = (float)(sqrt(gp_r * gp_r + gp_g * gp_g + gp_b * gp_b) / sqrt_3);
                 if (fv->font_is_blackwhite != 0 && gp->u32 != 0xff000000 && gp->u32 != 0xffffffff)
                 {
                     fv->font_is_blackwhite = 0;
                 }
-                if (fv->do_color_invert) gp_lum = 1.0f - gp_lum;
-                lum_row[x] = gp_lum;
-                glyph_brightness += gp_lum;
+                if (fv->do_color_invert) gp_brightness = 1.0f - gp_brightness;
+                brightness_row[x] = gp_brightness;
+                glyph_brightness += gp_brightness;
             }
         }
         glyph_brightness /= glyph_pixel_count;
@@ -1452,19 +1452,19 @@ FailExit:
 
 static void normalize_glyph(float *out, const float *in, size_t glyph_pixel_count);
 
-typedef struct code_lum_struct
+typedef struct code_brightness_struct
 {
     size_t index;
-    float lum;
+    float brightness;
     uint32_t code;
-}code_lum_t, * code_lum_p;
+}code_brightness_t, * code_brightness_p;
 
 static int cl_compare(const void *p1, const void *p2)
 {
-    const code_lum_t * cl1 = p1;
-    const code_lum_t * cl2 = p2;
-    if (cl1->lum < cl2->lum) return -1;
-    if (cl1->lum > cl2->lum) return 1;
+    const code_brightness_t * cl1 = p1;
+    const code_brightness_t * cl2 = p2;
+    if (cl1->brightness < cl2->brightness) return -1;
+    if (cl1->brightness > cl2->brightness) return 1;
     if (cl1->code < cl2->code) return -1;
     if (cl1->code > cl2->code) return 1;
     // if (cl1->index > cl2->index) return -1;
@@ -1475,7 +1475,7 @@ static int cl_compare(const void *p1, const void *p2)
 int sort_glyph_codes_by_brightness(fontvideo_p fv)
 {
     ptrdiff_t i;
-    code_lum_p cl_array = NULL;
+    code_brightness_p cl_array = NULL;
     float* glyph_array = NULL;
     UniformBitmap_p sorted_gm = NULL;
     size_t num_glyph_codes;
@@ -1497,10 +1497,10 @@ int sort_glyph_codes_by_brightness(fontvideo_p fv)
 #pragma omp parallel for
     for (i = 0; i < (ptrdiff_t)num_glyph_codes; i++)
     {
-        code_lum_p cl = &cl_array[i];
+        code_brightness_p cl = &cl_array[i];
         cl->code = fv->glyph_codes[i];
         cl->index = i;
-        cl->lum = fv->glyph_brightness[i];
+        cl->brightness = fv->glyph_brightness[i];
     }
 
     qsort(cl_array, num_glyph_codes, sizeof cl_array[0], cl_compare);
@@ -1509,12 +1509,12 @@ int sort_glyph_codes_by_brightness(fontvideo_p fv)
     for (i = 0; i < (ptrdiff_t)num_glyph_codes; i++)
     {
         ptrdiff_t j;
-        code_lum_p cl = &cl_array[i];
+        code_brightness_p cl = &cl_array[i];
         ptrdiff_t gm_sx, gm_sy, gm_dx, gm_dy, y;
 
         j = cl->index;
         fv->glyph_codes[i] = cl->code;
-        fv->glyph_brightness[i] = cl->lum;
+        fv->glyph_brightness[i] = cl->brightness;
 
         normalize_glyph(&glyph_array[glyph_pixel_count * i], &fv->glyph_vertical_array[glyph_pixel_count * j], glyph_pixel_count);
 
@@ -1634,16 +1634,16 @@ FailExit:
 static void frame_normalize_input(fontvideo_frame_p f)
 {
     int y;
-    float max_lum = -999999.9f;
-    float min_lum = 999999.9f;
-    float lum_dif = 0.0f;
-    float lum_scale = 1.7320508075688772935274463415059f;
+    float max_brightness = -999999.9f;
+    float min_brightness = 999999.9f;
+    float brightness_dif = 0.0f;
+    float brightness_scale = 1.7320508075688772935274463415059f;
 // #pragma omp parallel for
     for (y = 0; y < (int)f->raw_h; y++)
     {
         int x;
-        float row_max = max_lum;
-        float row_min = min_lum;
+        float row_max = max_brightness;
+        float row_min = min_brightness;
         uint32_t *raw_row = f->raw_data_row[y];
         for (x = 0; x < (int)f->raw_w; x++)
         {
@@ -1655,20 +1655,20 @@ static void frame_normalize_input(fontvideo_frame_p f)
             float src_r = (float)src_pixel->u8[0] / 255.0f;
             float src_g = (float)src_pixel->u8[1] / 255.0f;
             float src_b = (float)src_pixel->u8[2] / 255.0f;
-            float src_lum = (float)(sqrt(src_r * src_r + src_g * src_g + src_b * src_b) / sqrt_3);
-            if (src_lum > row_max) row_max = src_lum;
-            else if (src_lum < row_min) row_min = src_lum;
+            float src_brightness = (float)(sqrt(src_r * src_r + src_g * src_g + src_b * src_b) / sqrt_3);
+            if (src_brightness > row_max) row_max = src_brightness;
+            else if (src_brightness < row_min) row_min = src_brightness;
         }
 // #pragma omp critical
         if (1)
         {
-            if (row_max > max_lum) max_lum = row_max;
-            if (row_min < min_lum) min_lum = row_min;
+            if (row_max > max_brightness) max_brightness = row_max;
+            if (row_min < min_brightness) min_brightness = row_min;
         }
     }
-    max_lum /= lum_scale;
-    min_lum /= lum_scale;
-    lum_dif = max_lum - min_lum;
+    max_brightness /= brightness_scale;
+    min_brightness /= brightness_scale;
+    brightness_dif = max_brightness - min_brightness;
 
 #pragma omp parallel for
     for (y = 0; y < (int)f->raw_h; y++)
@@ -1685,9 +1685,9 @@ static void frame_normalize_input(fontvideo_frame_p f)
             float r = (float)src_pixel->u8[0] / 255.0f;
             float g = (float)src_pixel->u8[1] / 255.0f;
             float b = (float)src_pixel->u8[2] / 255.0f;
-            r = (r - min_lum) / lum_dif; if (r < 0) r = 0; else if (r > 1) r = 1;
-            g = (g - min_lum) / lum_dif; if (g < 0) g = 0; else if (g > 1) g = 1;
-            b = (b - min_lum) / lum_dif; if (b < 0) b = 0; else if (b > 1) b = 1;
+            r = (r - min_brightness) / brightness_dif; if (r < 0) r = 0; else if (r > 1) r = 1;
+            g = (g - min_brightness) / brightness_dif; if (g < 0) g = 0; else if (g > 1) g = 1;
+            b = (b - min_brightness) / brightness_dif; if (b < 0) b = 0; else if (b > 1) b = 1;
             src_pixel->u8[0] = (uint8_t)(r * 255.0f);
             src_pixel->u8[1] = (uint8_t)(g * 255.0f);
             src_pixel->u8[2] = (uint8_t)(b * 255.0f);
@@ -1755,7 +1755,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
         int fx, sx, sy;
         uint32_t *row = f->row[fy];
         uint8_t *c_row = f->c_row[fy];
-        float *src_lum_buffer = malloc(glyph_pixel_count * sizeof src_lum_buffer[0]); // Monochrome image buffer of a single char in a frame
+        float *src_brightness_buffer = malloc(glyph_pixel_count * sizeof src_brightness_buffer[0]); // Monochrome image buffer of a single char in a frame
         sy = fy * fv->glyph_height;
 
         for (fx = 0; fx < fw; fx++)
@@ -1776,7 +1776,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             for (y = 0; y < (int)fv->glyph_height; y++)
             {
                 uint32_t *raw_row = f->raw_data_row[sy + y];
-                float *buf_row = &src_lum_buffer[y * fv->glyph_width];
+                float *buf_row = &src_brightness_buffer[y * fv->glyph_width];
                 for (x = 0; x < (int)fv->glyph_width; x++)
                 {
                     union pixel
@@ -1785,16 +1785,16 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                         uint32_t u32;
                     }   *src_pixel = (void *)&(raw_row[sx + x]);
                     float src_r, src_g, src_b;
-                    float src_lum;
+                    float src_brightness;
                     if (fv->do_color_invert) src_pixel->u32 ^= 0xffffff;
                     src_r = (float)src_pixel->u8[0] / 255.0f;
                     src_g = (float)src_pixel->u8[1] / 255.0f;
                     src_b = (float)src_pixel->u8[2] / 255.0f;
-                    src_lum = (float)(sqrt(src_r * src_r + src_g * src_g + src_b * src_b) / sqrt_3);
-                    src_brightness += (double)src_lum; // Get brightness
-                    src_lum -= 0.5f; // Bias for convolutional
-                    buf_row[x] = src_lum; // Store for normalize
-                    src_normalize += (double)src_lum * src_lum; // LengthSq
+                    src_brightness = (float)(sqrt(src_r * src_r + src_g * src_g + src_b * src_b) / sqrt_3);
+                    src_brightness += (double)src_brightness; // Get brightness
+                    src_brightness -= 0.5f; // Bias for convolutional
+                    buf_row[x] = src_brightness; // Store for normalize
+                    src_normalize += (double)src_brightness * src_brightness; // LengthSq
                 }
             }
             src_brightness /= glyph_pixel_count;
@@ -1847,19 +1847,19 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             for (cur_code_index = start_code_position; cur_code_index <= end_code_position; cur_code_index++)
             {
                 double score = 0;
-                float *font_lum_img = &fv->glyph_vertical_array[cur_code_index * glyph_pixel_count];
+                float *font_brightness_img = &fv->glyph_vertical_array[cur_code_index * glyph_pixel_count];
 
                 // Compare each pixels and collect the scores.
                 for (y = 0; y < (int)fv->glyph_height; y++)
                 {
                     size_t row_start = (size_t)y * fv->glyph_width;
-                    float *buf_row = &src_lum_buffer[row_start];
-                    float *font_row = &font_lum_img[row_start];
+                    float *buf_row = &src_brightness_buffer[row_start];
+                    float *font_row = &font_brightness_img[row_start];
                     for (x = 0; x < (int)fv->glyph_width; x++)
                     {
-                        double src_lum = buf_row[x] / src_normalize;
-                        float font_lum = font_row[x];
-                        score += src_lum * font_lum;
+                        double src_brightness = buf_row[x] / src_normalize;
+                        float font_brightness = font_row[x];
+                        score += src_brightness * font_brightness;
                     }
                 }
 
@@ -1881,7 +1881,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
 #ifdef DEBUG_OUTPUT_TO_SCREEN
                 size_t row_start = (size_t)y * fv->glyph_width;
                 float *font_row = &fv->glyph_vertical_array[(size_t)best_code_index * glyph_pixel_count + row_start];
-                float *buf_row = &src_lum_buffer[y * fv->glyph_width];
+                float *buf_row = &src_brightness_buffer[y * fv->glyph_width];
 #endif
                 for (x = 0; x < (int)fv->glyph_width; x++)
                 {
@@ -1961,7 +1961,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             c_row[fx] = col;
         }
 
-        free(src_lum_buffer);
+        free(src_brightness_buffer);
     }
     if (fv->verbose)
     {
