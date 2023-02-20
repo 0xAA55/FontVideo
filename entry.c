@@ -38,7 +38,8 @@ void usage(char *argv0)
         "\t  Alias: --start-time\n"
         "\t--log: [Optional] Specify the log file.\n"
         "\t--invert-color: [Optional] Do color invert.\n"
-        "\t--no-opengl: [Optional] Do not use OpenGL to accelerate rendering.\n"
+        "\t--no-opengl: [Optional] Do not use OpenGL to accelerate rendering (default).\n"
+        "\t--use-opengl: [Optional] Use OpenGL to accelerate rendering.\n"
         "\t--no-frameskip: [Optional] Do not skip frames, which may cause video and audio could not sync.\n"
         "\t--no-auto-aspect-adjust: [Optional] Do not adjsut aspect ratio by changing output width automatically.\n"
         "\t--opengl-threads: [Optional] Set the OpenGL Renderer's thread number, default to your CPU thread number divide 4.\n"
@@ -64,7 +65,7 @@ int main(int argc, char **argv)
     int do_color_invert = 0;
     int normalize_input = 0;
     int no_colors = 0;
-    int no_opengl = 0;
+    int use_opengl = 0;
     int no_frameskip = 0;
     int no_auto_aspect_adjust = 0;
     int opengl_threads = 0; // 0 for default.
@@ -190,7 +191,12 @@ int main(int argc, char **argv)
             else if (!strcmp(argv[i], "--no-opengl"))
             {
                 i++;
-                no_opengl = 1;
+                use_opengl = 0;
+            }
+            else if (!strcmp(argv[i], "--use-opengl"))
+            {
+                i++;
+                use_opengl = 1;
             }
             else if (!strcmp(argv[i], "--no-frameskip"))
             {
@@ -279,7 +285,7 @@ int main(int argc, char **argv)
     if (do_color_invert) fv->do_color_invert = 1;
     if (normalize_input) fv->normalize_input = 1;
     if (output_frame_images_prefix) fv->output_frame_images_prefix = output_frame_images_prefix;
-    if (!no_opengl) fv_allow_opengl(fv, opengl_threads);
+    if (use_opengl) fv_allow_opengl(fv, opengl_threads);
 
     if (real_time_show) fv_show(fv);
     else

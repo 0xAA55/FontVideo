@@ -990,8 +990,9 @@ FailExit:
 #else
 int fv_allow_opengl(fontvideo_p fv, int opengl_threads)
 {
+    fv;
     opengl_threads;
-    fprintf(fv->log_fp, "Macro `FONTVIDEO_ALLOW_OPENGL` not defined when compiling, giving up using OpenGL.\n");
+    // fprintf(fv->log_fp, "Macro `FONTVIDEO_ALLOW_OPENGL` not defined when compiling, giving up using OpenGL.\n");
     return 0;
 }
 #endif
