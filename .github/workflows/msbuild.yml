@@ -61,6 +61,6 @@ jobs:
         $NAME="Auto-Build $(Get-Date -Format 'yyyy/MM/dd-HH:mm')"
         $TAGNAME="autobuild-$(Get-Date -Format 'yyyy-MM-dd-HH-mm')"
         hub release create -a FontVideo_Bin.zip -m "$NAME" -t "master" $TAGNAME
-        echo "::set-output name=tag_name::$TAGNAME"
+        echo "tag_name=$TAGNAME" >> $GITHUB_OUTPUT
       env:
         GITHUB_TOKEN: ${{ github.token }}
