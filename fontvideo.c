@@ -2324,7 +2324,8 @@ static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
         }
         if (!ctx)
         {
-            do_cpu_render(fv, f);
+            // do_cpu_render(fv, f);
+            relax_sleep(100);
             return;
         }
     }
