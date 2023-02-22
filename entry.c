@@ -13,7 +13,7 @@
 
 void usage(char *argv0)
 {
-    fprintf(stderr, "Usage: %s -i <input> [-o <output.txt>] [-v] [-p <seconds>] [-m] [-n] [-w <width>] [-h <height>] [-s <width> <height>] [-S <from_sec>] [-b] [--invert-color] [--no-opengl] [--no-frameskip] [--no-auto-aspect-adjust] [--opengl-threads <number>] [--assets-meta <metafile.ini>] [--output-frame-image-sequence <prefix>]\n"
+    fprintf(stderr, "Usage: %s -i <input> [-o <output.txt>] [-v] [-p <seconds>] [-m] [-n] [-w <width>] [-h <height>] [-s <width> <height>] [-S <from_sec>] [-b] [--white-background] [--no-opengl] [--no-frameskip] [--no-auto-aspect-adjust] [--opengl-threads <number>] [--assets-meta <metafile.ini>] [--output-frame-image-sequence <prefix>]\n"
         "Or: %s <input>\n"
         "\t-i: Specify the input video file name.\n"
         "\t-o: [Optional] Specify the output text file name.\n"
@@ -37,9 +37,11 @@ void usage(char *argv0)
         "\t-S: [Optional] Set the playback start time of seconds.\n"
         "\t  Alias: --start-time\n"
         "\t--log: [Optional] Specify the log file.\n"
-        "\t--invert-color: [Optional] Do color invert.\n"
+        "\t--white-background: [Optional] Do color invert.\n"
+        "\t  Alias: --white-bg\n"
         "\t--no-opengl: [Optional] Do not use OpenGL to accelerate rendering (default).\n"
         "\t--use-opengl: [Optional] Use OpenGL to accelerate rendering.\n"
+        "\t--use-both-cpu-gpu: [Optional] Use mixed OpenGL rendering and CPU rendering for best performance.\n"
         "\t--no-frameskip: [Optional] Do not skip frames, which may cause video and audio could not sync.\n"
         "\t--no-auto-aspect-adjust: [Optional] Do not adjsut aspect ratio by changing output width automatically.\n"
         "\t--opengl-threads: [Optional] Set the OpenGL Renderer's thread number, default to your CPU thread number divide 4.\n"
@@ -62,10 +64,11 @@ int main(int argc, char **argv)
     double start_sec = -1.0;
     int output_width = 80;
     int output_height = 25;
-    int do_color_invert = 0;
+    int white_background = 0;
     int normalize_input = 0;
     int no_colors = 0;
     int use_opengl = 0;
+    int mixed_opengl = 0;
     int no_frameskip = 0;
     int no_auto_aspect_adjust = 0;
     int opengl_threads = 0; // 0 for default.
@@ -183,10 +186,11 @@ int main(int argc, char **argv)
                 if (++i >= argc) goto BadUsageExit;
                 start_sec = atof(argv[i++]);
             }
-            else if (!strcmp(argv[i], "--invert-color"))
+            else if (!strcmp(argv[i], "--white-bg") || !strcmp(argv[i], "--white-background"))
             {
                 i++;
-                do_color_invert = 1;
+                white_background = 1;
+                no_colors = 1;
             }
             else if (!strcmp(argv[i], "--no-opengl"))
             {
@@ -197,6 +201,12 @@ int main(int argc, char **argv)
             {
                 i++;
                 use_opengl = 1;
+            }
+            else if (!strcmp(argv[i], "--use-both-cpu-gpu"))
+            {
+                i++;
+                use_opengl = 1;
+                mixed_opengl = 1;
             }
             else if (!strcmp(argv[i], "--no-frameskip"))
             {
@@ -276,15 +286,16 @@ int main(int argc, char **argv)
         prerender_secs,
         !mute,
         start_sec,
+        white_background,
         no_auto_aspect_adjust
     );
     if (!fv) goto FailExit;
 
     if (no_colors) fv->do_colored_output = 0;
     if (no_frameskip) fv->no_frameskip = 1;
-    if (do_color_invert) fv->do_color_invert = 1;
     if (normalize_input) fv->normalize_input = 1;
     if (output_frame_images_prefix) fv->output_frame_images_prefix = output_frame_images_prefix;
+    if (mixed_opengl) fv->allow_mixed_cpu_gpu = 1;
     if (use_opengl) fv_allow_opengl(fv, opengl_threads);
 
     if (real_time_show) fv_show(fv);

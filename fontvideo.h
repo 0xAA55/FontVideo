@@ -71,7 +71,7 @@ typedef struct fontvideo_struct
     int do_colored_output;
 
     // Config: should do color invert?
-    int do_color_invert;
+    int white_background;
 
     // Config: the weight of brightness in [0, 1], how important of the brightness
     float brightness_weight;
@@ -84,6 +84,9 @@ typedef struct fontvideo_struct
 
     // Config: should initialize OpenGL to utilize GPU rendering?
     int allow_opengl;
+    
+    // Config: should use CPU/GPU mixed rendering for frames?
+    int allow_mixed_cpu_gpu;
 
     // Config: how many OpenGL threads (OpenGL contexts) should use?
     // Every OpenGL context will consume large RAM usage, but crank up the GPU usage for efficiency.
@@ -220,6 +223,7 @@ fontvideo_p fv_create
     double precache_seconds,
     int do_audio_output,
     double start_timestamp,
+    int white_background,
     int no_auto_aspect_adjust
 );
 
