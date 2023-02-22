@@ -1696,6 +1696,21 @@ static void frame_normalize_input(fontvideo_frame_p f)
     }
 }
 
+struct brightness_index
+{
+    int index;
+    float brightness;
+};
+
+static int brightness_index_compare(const void* bi1, const void* bi2)
+{
+    const struct brightness_index* b1 = bi1;
+    const struct brightness_index* b2 = bi2;
+    if (b1->brightness < b2->brightness) return -1;
+    if (b1->brightness > b2->brightness) return 1;
+    return 0;
+}
+
 static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
 {
     int fy, fw, fh;
@@ -1710,12 +1725,14 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             float b, g, r;
         }rgb;
     }palette[16] = { 0 };
+    static struct brightness_index palette_brightness_index[16] = {0};
+    static atomic_int palette_initializing = 0;
     static int palette_initialized = 0;
 
     fw = f->w;
     fh = f->h;
 
-    if (!palette_initialized)
+    if (!palette_initialized && !atomic_exchange(&palette_initializing, 1))
     {
         // Get the palette from the table and convert to float [0, 1]
         for (i = 0; i < 16; i++)
@@ -1743,8 +1760,13 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             palette[i].rgb.r /= length;
             palette[i].rgb.g /= length;
             palette[i].rgb.b /= length;
+
+            palette_brightness_index[i].index = i;
+            palette_brightness_index[i].brightness = length / sqrt_3;
         }
+        qsort(palette_brightness_index, 16, sizeof palette_brightness_index[0], brightness_index_compare);
         palette_initialized = 1;
+        palette_initializing = 0;
     }
 
     if (fv->normalize_input) frame_normalize_input(f);
@@ -1762,15 +1784,13 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
         for (fx = 0; fx < fw; fx++)
         {
             int x, y;
-            float avr_r = 0, avr_g = 0, avr_b = 0;
-            int32_t cur_code_index = 0;
-            int32_t best_code_index = 0;
-            int32_t start_code_position = 0;
-            int32_t end_code_position = 0;
+            int cur_code_index = 0;
+            int best_code_index = 0;
+            int start_code_position = 0;
+            int end_code_position = 0;
             double src_normalize = 0;
             double src_brightness = 0;
             double best_score = -9999999.9f;
-            uint8_t col = 0;
             sx = fx * fv->glyph_width;
 
             // Compute source brightness for further use
@@ -1804,11 +1824,11 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
 
             if (1)
             {
-                int32_t half_window = fv->candidate_glyph_window_size / 2 + 1;
-                int32_t
+                int half_window = fv->candidate_glyph_window_size / 2 + 1;
+                int
                     left = 0,
-                    right = (int32_t)(num_glyph_codes - 1),
-                    mid = (int32_t)(num_glyph_codes / 2);
+                    right = (int)(num_glyph_codes - 1),
+                    mid = (int)(num_glyph_codes / 2);
                 float left_brightness = fv->glyph_brightness[left];
                 float right_brightness = fv->glyph_brightness[right];
                 // bisection approximation
@@ -1875,82 +1895,134 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             // row[fx] = fv->glyph_codes[best_code_index];
             row[fx] = best_code_index;
 
-            // Get the average color of the char from the source frame
-            for (y = 0; y < (int)fv->glyph_height; y++)
+            // Start picking color
+            if (fv->do_colored_output)
             {
-                uint32_t *raw_row = f->raw_data_row[sy + y];
-#ifdef DEBUG_OUTPUT_TO_SCREEN
-                size_t row_start = (size_t)y * fv->glyph_width;
-                float *font_row = &fv->glyph_vertical_array[(size_t)best_code_index * glyph_pixel_count + row_start];
-                float *buf_row = &src_lum_buffer[y * fv->glyph_width];
-#endif
-                for (x = 0; x < (int)fv->glyph_width; x++)
+                float avr_r = 0, avr_g = 0, avr_b = 0;
+                double avr_brightness = 0;
+                uint8_t col = 0;
+                int scp = 0;
+                int ecp = 0;
+                const int palette_brightness_window = 12;
+                int hcbw = palette_brightness_window / 2;
+                float sbr, ebr;
+
+                // Get the average color of the char from the source frame
+                for (y = 0; y < (int)fv->glyph_height; y++)
                 {
-                    union pixel
+                    uint32_t* raw_row = f->raw_data_row[sy + y];
+#ifdef DEBUG_OUTPUT_TO_SCREEN
+                    size_t row_start = (size_t)y * fv->glyph_width;
+                    float* font_row = &fv->glyph_vertical_array[(size_t)best_code_index * glyph_pixel_count + row_start];
+                    float* buf_row = &src_lum_buffer[y * fv->glyph_width];
+#endif
+                    for (x = 0; x < (int)fv->glyph_width; x++)
                     {
-                        uint8_t u8[4];
-                        uint32_t u32;
-                    }   *src_pixel = (void *)&(raw_row[sx + x]);
+                        union pixel
+                        {
+                            uint8_t u8[4];
+                            uint32_t u32;
+                        }   *src_pixel = (void*)&(raw_row[sx + x]);
 
-                    avr_b += (float)src_pixel->u8[0] / 255.0f;
-                    avr_g += (float)src_pixel->u8[1] / 255.0f;
-                    avr_r += (float)src_pixel->u8[2] / 255.0f;
+                        avr_b += (float)src_pixel->u8[0] / 255.0f;
+                        avr_g += (float)src_pixel->u8[1] / 255.0f;
+                        avr_r += (float)src_pixel->u8[2] / 255.0f;
 
 #ifdef DEBUG_OUTPUT_TO_SCREEN
-                    if (1)
+                        if (1)
+                        {
+                            // uint8_t uv = (uint8_t)((font_row[x] + 0.5) * 255.0f);
+                            uint8_t uv = (uint8_t)(font_row[x] * 255.0f);
+                            src_pixel->u8[0] = uv;
+                            src_pixel->u8[1] = uv;
+                            src_pixel->u8[2] = uv;
+                        }
+                        else
+                        {
+                            uint8_t uv = (uint8_t)(buf_row[x] * 255.0f);
+                            src_pixel->u8[0] = uv;
+                            src_pixel->u8[1] = uv;
+                            src_pixel->u8[2] = uv;
+                        }
+#endif
+                    }
+                }
+
+                avr_b /= glyph_pixel_count;
+                avr_g /= glyph_pixel_count;
+                avr_r /= glyph_pixel_count;
+                // **The following code uses vector matching method to pickup best color**
+                avr_b -= 0.5f;
+                avr_g -= 0.5f;
+                avr_r -= 0.5f;
+                src_normalize = sqrt(avr_r * avr_r + avr_g * avr_g + avr_b * avr_b);
+                if (src_normalize < 0.000001) src_normalize = 1;
+                avr_b = (float)(avr_b / src_normalize);
+                avr_g = (float)(avr_g / src_normalize);
+                avr_r = (float)(avr_r / src_normalize);
+                avr_brightness = src_normalize / sqrt_3;
+
+                scp = 0;
+                ecp = 15;
+                sbr = palette_brightness_index[scp].brightness;
+                ebr = palette_brightness_index[ecp].brightness;
+                for (; scp != ecp;)
+                {
+                    int mid = (scp + ecp) / 2;
+                    float mb;
+                    if (mid == scp) break;
+                    mb = palette_brightness_index[mid].brightness;
+                    if (avr_brightness < mb)
                     {
-                        // uint8_t uv = (uint8_t)((font_row[x] + 0.5) * 255.0f);
-                        uint8_t uv = (uint8_t)(font_row[x] * 255.0f);
-                        src_pixel->u8[0] = uv;
-                        src_pixel->u8[1] = uv;
-                        src_pixel->u8[2] = uv;
+                        ecp = mid;
+                        ebr = palette_brightness_index[ecp].brightness;
+                    }
+                    else if (src_brightness > mb)
+                    {
+                        scp = mid;
+                        sbr = palette_brightness_index[scp].brightness;
                     }
                     else
                     {
-                        uint8_t uv = (uint8_t)(buf_row[x] * 255.0f);
-                        src_pixel->u8[0] = uv;
-                        src_pixel->u8[1] = uv;
-                        src_pixel->u8[2] = uv;
+                        break;
                     }
-#endif
                 }
-            }
 
-            avr_b /= glyph_pixel_count;
-            avr_g /= glyph_pixel_count;
-            avr_r /= glyph_pixel_count;
-            // **The following code uses vector matching method to pickup best color**
-            avr_b -= 0.5f;
-            avr_g -= 0.5f;
-            avr_r -= 0.5f;
-            src_normalize = sqrt(avr_r * avr_r + avr_g * avr_g + avr_b * avr_b);
-            if (src_normalize < 0.000001) src_normalize = 1;
-            avr_b = (float)(avr_b / src_normalize);
-            avr_g = (float)(avr_g / src_normalize);
-            avr_r = (float)(avr_r / src_normalize);
+                scp -= hcbw;
+                ecp = scp + hcbw + hcbw;
+                if (scp < 0) scp = 0;
+                else if (scp > 15) scp = 15;
+                if (ecp < 0) ecp = 0;
+                else if (ecp > 15) ecp = 15;
 
-            best_score = -9999999.9f;
-            // best_score = 9999999.9f;
-            col = 0;
-            for (i = 0; i < 16; i++)
-            {
-                // **The following code uses vector matching method to pickup best color**
-                float score =
-                    avr_r * palette[i].rgb.r +
-                    avr_g * palette[i].rgb.g +
-                    avr_b * palette[i].rgb.b;
-                // Use lowered precision to match OpenGL implementation
-                if ((int)(score * 255) >= (int)(best_score * 255))
+                best_score = -9999999.9f;
+                // best_score = 9999999.9f;
+                col = 0;
+                for (i = scp; i <= ecp; i++)
                 {
-                    best_score = score;
-                    col = (uint8_t)i;
+                    int j = palette_brightness_index[i].index;
+                    // **The following code uses vector matching method to pickup best color**
+                    float score =
+                        avr_r * palette[j].rgb.r +
+                        avr_g * palette[j].rgb.g +
+                        avr_b * palette[j].rgb.b;
+                    // Use lowered precision to match OpenGL implementation
+                    if ((int)(score * 255) >= (int)(best_score * 255))
+                    {
+                        best_score = score;
+                        col = (uint8_t)j;
+                    }
                 }
+
+                // Avoid generating pure black characters.
+                if (!col) col = 0x08;
+
+                c_row[fx] = col;
             }
-
-            // Avoid generating pure black characters.
-            if (!col) col = 0x08;
-
-            c_row[fx] = col;
+            else
+            {
+                c_row[fx] = 15;
+            }
         }
 
         free(src_lum_buffer);
