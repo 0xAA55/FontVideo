@@ -1432,7 +1432,7 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
                 {
                     fv->font_is_blackwhite = 0;
                 }
-                if (fv->do_color_invert) gp_lum = 1.0f - gp_lum;
+                if (fv->white_background) gp_lum = 1.0f - gp_lum;
                 lum_row[x] = gp_lum;
                 glyph_brightness += gp_lum;
             }
@@ -1530,9 +1530,23 @@ int sort_glyph_codes_by_brightness(fontvideo_p fv)
         gm_dx *= fv->glyph_width;
         gm_dy *= fv->glyph_height;
 
-        for (y = 0; y < fv->glyph_height; y++)
+        if (!fv->white_background)
         {
-            memcpy(&sorted_gm->RowPointers[gm_dy + y][gm_dx], &fv->glyph_matrix->RowPointers[gm_sy + y][gm_sx], fv->glyph_width * sizeof(uint32_t));
+            for (y = 0; y < fv->glyph_height; y++)
+            {
+                memcpy(&sorted_gm->RowPointers[gm_dy + y][gm_dx], &fv->glyph_matrix->RowPointers[gm_sy + y][gm_sx], fv->glyph_width * sizeof(uint32_t));
+            }
+        }
+        else
+        {
+            for (y = 0; y < fv->glyph_height; y++)
+            {
+                uint32_t x;
+                for (x = 0; x < fv->glyph_width; x++)
+                {
+                    sorted_gm->RowPointers[gm_dy + y][gm_dx + x] = 0x00ffffff ^ fv->glyph_matrix->RowPointers[gm_sy + y][gm_sx + x];
+                }
+            }
         }
     }
 
@@ -1762,7 +1776,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             palette[i].rgb.b /= length;
 
             palette_brightness_index[i].index = i;
-            palette_brightness_index[i].brightness = length / sqrt_3;
+            palette_brightness_index[i].brightness = (float)(length / sqrt_3);
         }
         qsort(palette_brightness_index, 16, sizeof palette_brightness_index[0], brightness_index_compare);
         palette_initialized = 1;
@@ -1807,7 +1821,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                     }   *src_pixel = (void *)&(raw_row[sx + x]);
                     float src_r, src_g, src_b;
                     float src_lum;
-                    if (fv->do_color_invert) src_pixel->u32 ^= 0xffffff;
+                    // if (fv->white_background) src_pixel->u32 ^= 0xffffff;
                     src_r = (float)src_pixel->u8[0] / 255.0f;
                     src_g = (float)src_pixel->u8[1] / 255.0f;
                     src_b = (float)src_pixel->u8[2] / 255.0f;
@@ -2145,7 +2159,7 @@ static int do_opengl_render_command(fontvideo_p fv, fontvideo_frame_p f, opengl_
     if (Location >= 0) glUniform1i(Location, (GLint)fv->num_glyph_codes);
 
     Location = glGetUniformLocation(gld->result_shader, "iSrcInvert");
-    if (Location >= 0) glUniform1i(Location, fv->do_color_invert);
+    if (Location >= 0) glUniform1i(Location, fv->white_background);
 
     Location = glGetUniformLocation(gld->result_shader, "iGlyphSize");
     if (Location >= 0) glUniform2i(Location, fv->glyph_width, fv->glyph_height);
@@ -2324,8 +2338,8 @@ static void do_gpu_render(fontvideo_p fv, fontvideo_frame_p f)
         }
         if (!ctx)
         {
-            // do_cpu_render(fv, f);
-            relax_sleep(100);
+            if (fv->allow_mixed_cpu_gpu) do_cpu_render(fv, f);
+            else relax_sleep(100);
             return;
         }
     }
@@ -2746,7 +2760,7 @@ static int create_rendered_image(fontvideo_p fv, fontvideo_frame_p rendered_fram
                 {
                     uint32_t *src_row = fm->RowPointers[font_y + y];
                     uint8_t *dst_row = &bmp[(size_t)(bh - 1 - (dy + y)) * pitch];
-                    for (x = 0; x < fv->glyph_width; x+=2)
+                    for (x = 0; x < fv->glyph_width; x += 2)
                     {
                         size_t index = (size_t)(dx + x) >> 1;
                         dst_row[index] = 0;
@@ -3182,6 +3196,7 @@ fontvideo_p fv_create
     double precache_seconds,
     int do_audio_output,
     double start_timestamp,
+    int white_background,
     int no_auto_aspect_adjust
 )
 {
@@ -3198,6 +3213,7 @@ fontvideo_p fv_create
     fv->verbose_threading = log_verbose_threading;
     fv->graphics_out_fp = graphics_out_fp;
     fv->do_audio_output = do_audio_output;
+    fv->white_background = white_background;
 
     if (graphics_out_fp == stdout || graphics_out_fp == stderr)
     {
