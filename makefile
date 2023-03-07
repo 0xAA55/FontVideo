@@ -1,6 +1,6 @@
 CC=gcc
 LD=gcc
-CFLAGS=-std=c11 -Wall -O3 -flto -mavx -fopenmp -I. -Iinclude -DGLEW_STATIC -DFONTVIDEO_ALLOW_OPENGL
+CFLAGS=-std=c11 -Wall -O3 -flto -mavx -fopenmp -I. -Iinclude -DGLEW_STATIC
 LDLIBS=-lavformat -lavcodec -lavutil -lswresample -lswscale -lsoundio -lm $$(pkg-config --static --libs glfw3) -lGL -lGLU -Lrttimer -lrttimer -LC_dict -lcdict -fopenmp
 LDFLAGS=-O3
 

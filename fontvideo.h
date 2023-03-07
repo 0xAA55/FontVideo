@@ -82,16 +82,6 @@ typedef struct fontvideo_struct
     // Config: output size in characters
     uint32_t output_w, output_h;
 
-    // Config: should initialize OpenGL to utilize GPU rendering?
-    int allow_opengl;
-    
-    // Config: should use CPU/GPU mixed rendering for frames?
-    int allow_mixed_cpu_gpu;
-
-    // Config: how many OpenGL threads (OpenGL contexts) should use?
-    // Every OpenGL context will consume large RAM usage, but crank up the GPU usage for efficiency.
-    int opengl_threads;
-
     // Config: Debug purpose: should write verbose info to log file or not
     int verbose;
 
@@ -137,9 +127,6 @@ typedef struct fontvideo_struct
     // Status: the window size of the candidate glyphs, affected by `brightness_weight` and `num_glyph_codes`
     // The more weight for brightness, the smaller window size
     int candidate_glyph_window_size;
-
-    // Status: the internal OpenGL renderer data.
-    void* opengl_renderer;
 
     // Status: is currently finished pre-render frames?
     int prepared;
@@ -227,7 +214,6 @@ fontvideo_p fv_create
     int no_auto_aspect_adjust
 );
 
-int fv_allow_opengl(fontvideo_p fv, int opengl_threads);
 int fv_show_prepare(fontvideo_p fv);
 int fv_show(fontvideo_p fv);
 int fv_render(fontvideo_p fv);

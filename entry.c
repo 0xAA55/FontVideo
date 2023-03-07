@@ -13,7 +13,7 @@
 
 void usage(char *argv0)
 {
-    fprintf(stderr, "Usage: %s -i <input> [-o <output.txt>] [-v] [-p <seconds>] [-m] [-n] [-w <width>] [-h <height>] [-s <width> <height>] [-S <from_sec>] [-b] [--white-background] [--no-opengl] [--no-frameskip] [--no-auto-aspect-adjust] [--opengl-threads <number>] [--assets-meta <metafile.ini>] [--output-frame-image-sequence <prefix>]\n"
+    fprintf(stderr, "Usage: %s -i <input> [-o <output.txt>] [-v] [-p <seconds>] [-m] [-n] [-w <width>] [-h <height>] [-s <width> <height>] [-S <from_sec>] [-b] [--white-background] [--no-frameskip] [--no-auto-aspect-adjust] [--assets-meta <metafile.ini>] [--output-frame-image-sequence <prefix>]\n"
         "Or: %s <input>\n"
         "\t-i: Specify the input video file name.\n"
         "\t-o: [Optional] Specify the output text file name.\n"
@@ -39,12 +39,8 @@ void usage(char *argv0)
         "\t--log: [Optional] Specify the log file.\n"
         "\t--white-background: [Optional] Do color invert.\n"
         "\t  Alias: --white-bg\n"
-        "\t--no-opengl: [Optional] Do not use OpenGL to accelerate rendering (default).\n"
-        "\t--use-opengl: [Optional] Use OpenGL to accelerate rendering.\n"
-        "\t--use-both-cpu-gpu: [Optional] Use mixed OpenGL rendering and CPU rendering for best performance.\n"
         "\t--no-frameskip: [Optional] Do not skip frames, which may cause video and audio could not sync.\n"
         "\t--no-auto-aspect-adjust: [Optional] Do not adjsut aspect ratio by changing output width automatically.\n"
-        "\t--opengl-threads: [Optional] Set the OpenGL Renderer's thread number, default to your CPU thread number divide 4.\n"
         "\t--assets-meta: [Optional] Use specified meta file, default is to use 'assets"SUBDIR"meta.ini'.\n"
         "\t--output-frame-image-sequence: [Optional] Output each frame image to a directory. The format of the image is `bmp`.\n"
         "", argv0, argv0);
@@ -67,11 +63,8 @@ int main(int argc, char **argv)
     int white_background = 0;
     int normalize_input = 0;
     int no_colors = 0;
-    int use_opengl = 0;
-    int mixed_opengl = 0;
     int no_frameskip = 0;
     int no_auto_aspect_adjust = 0;
-    int opengl_threads = 0; // 0 for default.
     char *assets_meta = "assets"SUBDIR"meta.ini";
     char *output_frame_images_prefix = NULL;
     FILE *fp_log = stderr;
@@ -192,22 +185,6 @@ int main(int argc, char **argv)
                 white_background = 1;
                 no_colors = 1;
             }
-            else if (!strcmp(argv[i], "--no-opengl"))
-            {
-                i++;
-                use_opengl = 0;
-            }
-            else if (!strcmp(argv[i], "--use-opengl"))
-            {
-                i++;
-                use_opengl = 1;
-            }
-            else if (!strcmp(argv[i], "--use-both-cpu-gpu"))
-            {
-                i++;
-                use_opengl = 1;
-                mixed_opengl = 1;
-            }
             else if (!strcmp(argv[i], "--no-frameskip"))
             {
                 i++;
@@ -217,11 +194,6 @@ int main(int argc, char **argv)
             {
                 i++;
                 no_auto_aspect_adjust = 1;
-            }
-            else if (!strcmp(argv[i], "--opengl-threads"))
-            {
-                if (++i >= argc) goto BadUsageExit;
-                opengl_threads = atoi(argv[i++]);
             }
             else if (!strcmp(argv[i], "--assets-meta"))
             {
@@ -295,8 +267,6 @@ int main(int argc, char **argv)
     if (no_frameskip) fv->no_frameskip = 1;
     if (normalize_input) fv->normalize_input = 1;
     if (output_frame_images_prefix) fv->output_frame_images_prefix = output_frame_images_prefix;
-    if (mixed_opengl) fv->allow_mixed_cpu_gpu = 1;
-    if (use_opengl) fv_allow_opengl(fv, opengl_threads);
 
     if (real_time_show) fv_show(fv);
     else
