@@ -82,6 +82,9 @@ typedef struct fontvideo_struct
     // Config: output size in characters
     uint32_t output_w, output_h;
 
+    // Config: do avoid repetition or not?
+    int no_avoid_repetition;
+
     // Config: Debug purpose: should write verbose info to log file or not
     int verbose;
 

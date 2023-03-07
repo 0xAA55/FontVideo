@@ -13,7 +13,7 @@
 
 void usage(char *argv0)
 {
-    fprintf(stderr, "Usage: %s -i <input> [-o <output.txt>] [-v] [-p <seconds>] [-m] [-n] [-w <width>] [-h <height>] [-s <width> <height>] [-S <from_sec>] [-b] [--white-background] [--no-frameskip] [--no-auto-aspect-adjust] [--assets-meta <metafile.ini>] [--output-frame-image-sequence <prefix>]\n"
+    fprintf(stderr, "Usage: %s -i <input> [-o <output.txt>] [-v] [-p <seconds>] [-m] [-n] [-w <width>] [-h <height>] [-s <width> <height>] [-S <from_sec>] [-b] [--white-background] [--no-frameskip] [--no-avoid-repetition] [--no-auto-aspect-adjust] [--assets-meta <metafile.ini>] [--output-frame-image-sequence <prefix>]\n"
         "Or: %s <input>\n"
         "\t-i: Specify the input video file name.\n"
         "\t-o: [Optional] Specify the output text file name.\n"
@@ -40,6 +40,7 @@ void usage(char *argv0)
         "\t--white-background: [Optional] Do color invert.\n"
         "\t  Alias: --white-bg\n"
         "\t--no-frameskip: [Optional] Do not skip frames, which may cause video and audio could not sync.\n"
+        "\t--no-avoid-repetition: [Optional] Do not try to avoid repetition of using glyphs.\n"
         "\t--no-auto-aspect-adjust: [Optional] Do not adjsut aspect ratio by changing output width automatically.\n"
         "\t--assets-meta: [Optional] Use specified meta file, default is to use 'assets"SUBDIR"meta.ini'.\n"
         "\t--output-frame-image-sequence: [Optional] Output each frame image to a directory. The format of the image is `bmp`.\n"
@@ -64,6 +65,7 @@ int main(int argc, char **argv)
     int normalize_input = 0;
     int no_colors = 0;
     int no_frameskip = 0;
+    int no_avoid_repetition = 0;
     int no_auto_aspect_adjust = 0;
     char *assets_meta = "assets"SUBDIR"meta.ini";
     char *output_frame_images_prefix = NULL;
@@ -190,6 +192,11 @@ int main(int argc, char **argv)
                 i++;
                 no_frameskip = 1;
             }
+            else if (!strcmp(argv[i], "--no-avoid-repetition"))
+            {
+                i++;
+                no_avoid_repetition = 1;
+            }
             else if (!strcmp(argv[i], "--no-auto-aspect-adjust"))
             {
                 i++;
@@ -266,6 +273,7 @@ int main(int argc, char **argv)
     if (no_colors) fv->do_colored_output = 0;
     if (no_frameskip) fv->no_frameskip = 1;
     if (normalize_input) fv->normalize_input = 1;
+    if (no_avoid_repetition) fv->no_avoid_repetition = 1;
     if (output_frame_images_prefix) fv->output_frame_images_prefix = output_frame_images_prefix;
 
     if (real_time_show) fv_show(fv);
