@@ -29,6 +29,9 @@ struct fontvideo_frame_struct
     uint32_t raw_w, raw_h;
     uint32_t *raw_data;
     uint32_t **raw_data_row;
+
+    float *mono_data;
+    float **mono_data_row;
     fontvideo_frame_p next;
 };
 

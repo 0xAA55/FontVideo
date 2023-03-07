@@ -342,6 +342,8 @@ static void frame_delete(fontvideo_frame_p f)
 
     free(f->raw_data); // RGBA pixel data
     free(f->raw_data_row);
+    free(f->mono_data); // RGBA pixel data
+    free(f->mono_data_row);
     free(f->data); // Font CharCode data
     free(f->row);
     free(f->c_data); // Color data
@@ -920,12 +922,15 @@ static fontvideo_frame_p frame_create(uint32_t w, uint32_t h, double timestamp, 
     f->raw_h = bmp_height;
     f->raw_data = calloc(bmp_height, bmp_pitch); if (!f->raw_data) goto FailExit;
     f->raw_data_row = calloc(bmp_height, sizeof f->raw_data_row[0]); if (!f->raw_data_row) goto FailExit;
+    f->mono_data = calloc(bmp_height, bmp_width * sizeof f->mono_data[0]); if (!f->mono_data) goto FailExit;
+    f->mono_data_row = calloc(bmp_height, sizeof f->mono_data_row[0]); if (!f->mono_data_row) goto FailExit;
 
     // Copy the source bitmap whilst creating row pointers.
 #pragma omp parallel for
     for (i = 0; i < (ptrdiff_t)bmp_height; i++)
     {
-        f->raw_data_row[i] = (void *)&(((uint8_t *)f->raw_data)[i * bmp_pitch]);
+        f->raw_data_row[i] = (void*)&(((uint8_t*)f->raw_data)[i * bmp_pitch]);
+        f->mono_data_row[i] = &f->mono_data[i * bmp_width];
         memcpy(f->raw_data_row[i], &((uint8_t*)bitmap)[i * bmp_pitch], bmp_pitch);
     }
     
@@ -1081,7 +1086,6 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
         int fx, sx, sy;
         uint32_t *row = f->row[fy];
         uint8_t *c_row = f->c_row[fy];
-        float *src_lum_buffer = malloc(glyph_pixel_count * sizeof src_lum_buffer[0]); // Monochrome image buffer of a single char in a frame
         sy = fy * fv->glyph_height;
 
         for (fx = 0; fx < fw; fx++)
@@ -1094,7 +1098,10 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             double src_normalize = 0;
             double src_brightness = 0;
             double best_score = -9999999.9f;
+            // Monochrome image buffer of a single char in a frame
+            float* src_lum_buffer;
             sx = fx * fv->glyph_width;
+            src_lum_buffer = &f->mono_data_row[sy][sx];
 
             // Compute source brightness for further use
             for (y = 0; y < (int)fv->glyph_height; y++)
@@ -1327,7 +1334,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             }
         }
 
-        free(src_lum_buffer);
+        // free(src_lum_buffer);
     }
     if (fv->verbose)
     {
