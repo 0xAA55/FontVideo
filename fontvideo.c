@@ -234,7 +234,7 @@ static void backoff(int *iter_counter)
 {
     const int max_iter = 16;
     const int max_yield = 1;
-    const int max_sleep_ms = 100;
+    const int max_sleep_ms = 20;
     if (iter_counter[0] < 0) iter_counter[0] = 0;
     if (iter_counter[0] < max_iter)
     {
@@ -250,11 +250,13 @@ static void backoff(int *iter_counter)
     else
     {
         int random;
-        int sleep_ms = 1 << (iter_counter[0] - max_iter - max_yield);
+        int shift = iter_counter[0] - max_iter - max_yield;
+        int sleep_ms;
         if (iter_counter[0] < 0x7fffffff) iter_counter[0] ++;
+        sleep_ms = 1 << shift;
+        if (sleep_ms > max_sleep_ms || sleep_ms < 0) sleep_ms = max_sleep_ms;
 #pragma omp critical
         random = rand();
-        if (sleep_ms > max_sleep_ms) sleep_ms = max_sleep_ms;
         relax_sleep(random % sleep_ms);
     }
 }
@@ -2349,10 +2351,10 @@ int fv_render(fontvideo_p fv)
 
     if (!fv) return 0;
 
-#pragma omp parallel
     if (run_mt)
     {
         int bo = 0;
+#pragma omp parallel
         for (;;)
         {
             if (0 ||
