@@ -1020,13 +1020,18 @@ static int brightness_index_compare(const void* bi1, const void* bi2)
     return 0;
 }
 
+static size_t get_glyph_bitmap_length(size_t num_glyph_codes)
+{
+    return ((num_glyph_codes - 1) / (8 * sizeof(size_t)) + 1) * sizeof(size_t);
+}
+
 static int get_glyph_usage(size_t* glyph_usage_bitmap, uint32_t code)
 {
     uint32_t nbit = code % (8 * sizeof glyph_usage_bitmap[0]);
     size_t unit = code / (8 * sizeof glyph_usage_bitmap[0]);
     size_t bm = (size_t)1 << nbit;
     if (!glyph_usage_bitmap) return 0;
-    return bm & glyph_usage_bitmap[unit];
+    return (bm & glyph_usage_bitmap[unit]) ? 1 : 0;
 }
 
 static void set_glyph_usage(size_t* glyph_usage_bitmap, uint32_t code, int value)
@@ -1035,14 +1040,17 @@ static void set_glyph_usage(size_t* glyph_usage_bitmap, uint32_t code, int value
     size_t unit = code / (8 * sizeof glyph_usage_bitmap[0]);
     size_t bm = (size_t)1 << nbit;
     if (!glyph_usage_bitmap) return;
-    if (value)
-    {
-        glyph_usage_bitmap[unit] |= bm;
-    }
-    else
-    {
-        glyph_usage_bitmap[unit] &= ~bm;
-    }
+    if (value) glyph_usage_bitmap[unit] |= bm;
+    else glyph_usage_bitmap[unit] &= ~bm;
+}
+
+static void clear_all_glyph_usage(size_t* glyph_usage_bitmap, size_t num_glyph_codes)
+{
+    size_t i;
+    size_t length;
+    if (!glyph_usage_bitmap) return;
+    length = get_glyph_bitmap_length(num_glyph_codes) / sizeof(size_t);
+    for (i = 0; i < length; i++) glyph_usage_bitmap[i] = 0;
 }
 
 static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
@@ -1105,7 +1113,11 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
     }
 
     if (fv->normalize_input) frame_normalize_input(f);
-    if (!fv->no_avoid_repetition) glyph_usage_bitmap = calloc((fv->num_glyph_codes - 1) / (8 * sizeof glyph_usage_bitmap[0]) + 1, sizeof glyph_usage_bitmap[0]);
+    if (!fv->no_avoid_repetition)
+    {
+        glyph_usage_bitmap = malloc(get_glyph_bitmap_length(num_glyph_codes));
+        clear_all_glyph_usage(glyph_usage_bitmap, num_glyph_codes);
+    }
 
     for (fy = 0; fy < fh; fy++)
     {
@@ -1228,7 +1240,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                         if (score >= best_score)
                         {
                             int glyph_used = get_glyph_usage(glyph_usage_bitmap, cur_code_index);
-                            if (score == best_score) glyph_used |= (rand() & 1);
+                            // if (score == best_score) glyph_used |= (rand() & 1);
                             if (!glyph_used)
                             {
                                 best_score = score;
@@ -1244,10 +1256,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                     if (end_code_position > num_glyph_codes - 1) end_code_position = (int32_t)num_glyph_codes - 1;
                     if (end_code_position - start_code_position >= (int32_t)num_glyph_codes - 1)
                     {
-                        for (cur_code_index = 0; cur_code_index < num_glyph_codes; cur_code_index++)
-                        {
-                            set_glyph_usage(glyph_usage_bitmap, cur_code_index, 0);
-                        }
+                        clear_all_glyph_usage(glyph_usage_bitmap, num_glyph_codes);
                         start_code_position = origs;
                         end_code_position = orige;
                     }
