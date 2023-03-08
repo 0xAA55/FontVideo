@@ -1053,6 +1053,11 @@ static void clear_all_glyph_usage(size_t* glyph_usage_bitmap, size_t num_glyph_c
     for (i = 0; i < length; i++) glyph_usage_bitmap[i] = 0;
 }
 
+static int make_padding(int value, int pad)
+{
+    return ((value - 1) / pad + 1) * pad;
+}
+
 static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
 {
     int fy, fw, fh;
@@ -1197,14 +1202,16 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                     }
                     else
                     {
-                        start_code_position = left - half_window;
+                        // start_code_position = left - half_window;
+                        start_code_position = (left / fv->candidate_glyph_window_size) * fv->candidate_glyph_window_size;
                         end_code_position = start_code_position + fv->candidate_glyph_window_size - 1;
                         break;
                     }
                     mid = (right + left) / 2;
                     if (mid == left)
                     {
-                        start_code_position = left - half_window;
+                        // start_code_position = left - half_window;
+                        start_code_position = (left / fv->candidate_glyph_window_size) * fv->candidate_glyph_window_size;
                         end_code_position = start_code_position + fv->candidate_glyph_window_size - 1;
                         break;
                     }
@@ -1250,6 +1257,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                         }
                     }
                     if (findmatch) break;
+                    /*
                     start_code_position -= fv->candidate_glyph_window_size / 2;
                     end_code_position += fv->candidate_glyph_window_size / 2;
                     if (start_code_position < 0) start_code_position = 0;
@@ -1259,7 +1267,9 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                         clear_all_glyph_usage(glyph_usage_bitmap, num_glyph_codes);
                         start_code_position = origs;
                         end_code_position = orige;
-                    }
+                    }*/
+
+                    clear_all_glyph_usage(glyph_usage_bitmap, num_glyph_codes);
                 }
             }
 
