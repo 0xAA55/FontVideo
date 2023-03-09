@@ -853,6 +853,12 @@ int sort_glyph_codes_by_brightness(fontvideo_p fv)
     glyph_brightness_max = fv->glyph_brightness[num_glyph_codes - 1];
     glyph_brightness_range = glyph_brightness_max - glyph_brightness_min;
 
+#pragma omp parallel for
+    for (i = 0; i < (ptrdiff_t)num_glyph_codes; i++)
+    {
+        fv->glyph_brightness[i] = (fv->glyph_brightness[i] - glyph_brightness_min) / glyph_brightness_range;
+    }
+
     UB_Free(&fv->glyph_matrix);
     fv->glyph_matrix = sorted_gm;
     free(fv->glyph_vertical_array);
