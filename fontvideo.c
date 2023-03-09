@@ -923,9 +923,14 @@ static void clear_all_glyph_usage(size_t* glyph_usage_bitmap, size_t num_glyph_c
     for (i = 0; i < length; i++) glyph_usage_bitmap[i] = 0;
 }
 
-static void frame_delete(fontvideo_frame_p f)
+static void frame_delete(fontvideo_frame_p* pf)
 {
+    fontvideo_frame_p f;
+
+    if (!pf) return;
+    f = *pf;
     if (!f) return;
+    *pf = NULL;
 
     // free(f->raw_data); // RGBA pixel data
     // free(f->raw_data_row);
@@ -1555,7 +1560,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                         src_pixel->u8[1] = uv;
                         src_pixel->u8[2] = uv;
                     }
-                    if (2)
+                    if (1)
                     {
                         uint8_t uv = (uint8_t)((mono_row[x] - ms.src_min) * 255.0 / ms.src_range);
                         src_pixel = (void*)&(mono_row[x]);
@@ -1822,7 +1827,7 @@ static int get_frame_and_render(fontvideo_p fv)
                     }
                     else
                     {
-                        frame_delete(f);
+                        frame_delete(&f);
                         f = fv->frames = next;
                         fv->precached_frame_count--;
                         continue;
@@ -1831,7 +1836,7 @@ static int get_frame_and_render(fontvideo_p fv)
                 else
                 {
                     prev->next = next;
-                    frame_delete(f);
+                    frame_delete(&f);
                     f = next;
                     fv->precached_frame_count--;
                     continue;
@@ -2119,7 +2124,7 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                             if (!prev) prev = fv->frames;
                             prev->next = next;
                         }
-                        frame_delete(cur);
+                        frame_delete(&cur);
                         cur = next;
                         fv->precached_frame_count--;
                         fv->rendered_frame_count--;
@@ -2142,7 +2147,7 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                                 if (!prev) prev = fv->frames;
                                 prev->next = next;
                             }
-                            frame_delete(cur);
+                            frame_delete(&cur);
                             cur = next;
                             fv->precached_frame_count--;
                         }
@@ -2310,7 +2315,7 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
         {
             fv->frame_last = NULL;
         }
-        frame_delete(cur);
+        frame_delete(&cur);
         fv->precached_frame_count--;
         fv->rendered_frame_count--;
         fv->last_output_time = timestamp;
@@ -2644,7 +2649,7 @@ void fv_destroy(fontvideo_p fv)
     while (fv->frames)
     {
         fontvideo_frame_p next = fv->frames->next;
-        frame_delete(fv->frames);
+        frame_delete(&fv->frames);
         fv->frames = next;
     }
 
