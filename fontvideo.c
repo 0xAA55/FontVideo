@@ -1136,7 +1136,8 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
         {
             int x, y;
             int cur_code_index = 0;
-            int best_code_index = 0;
+            int best_code_index_diff = 0;
+            int best_code_index_conv = 0;
             int start_code_position = 0;
             int end_code_position = 0;
             int findmatch = 0;
@@ -1144,7 +1145,8 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             float src_min = 999;
             float src_max = 0;
             float src_normalize;
-            double best_score = 9999999999.9f;
+            double best_score_diff = 9999999999.9f;
+            double best_score_conv = 9999999999.9f;
             sx = fx * fv->glyph_width;
 
             // Compute source brightness for further use
@@ -1226,7 +1228,8 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                 {
                     for (cur_code_index = start_code_position; cur_code_index <= end_code_position; cur_code_index++)
                     {
-                        double score = 0;
+                        double score_diff = 0;
+                        double score_conv = 0;
                         float* font_lum_img = &fv->glyph_vertical_array[cur_code_index * glyph_pixel_count];
 
                         // Compare each pixels and collect the scores.
@@ -1240,18 +1243,20 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                                 float src_lum = buf_row[x];
                                 float font_lum = font_row[x];
                                 double diff = font_lum - (double)(src_lum - src_min) / src_normalize;
-                                score += diff * diff;
+                                double conv = (font_lum - 0.5) * (src_lum - 0.5);
+                                score_diff += diff * diff;
+                                score_conv += conv;
                             }
                         }
 
-                        if (score <= best_score)
+                        if (score_diff <= best_score_diff)
                         {
                             int glyph_used = get_glyph_usage(glyph_usage_bitmap, cur_code_index);
-                            // if (score == best_score) glyph_used |= (rand() & 1);
+                            // if (score == best_score_diff) glyph_used |= (rand() & 1);
                             if (!glyph_used)
                             {
-                                best_score = score;
-                                best_code_index = cur_code_index;
+                                best_score_diff = score_diff;
+                                best_code_index_diff = cur_code_index;
                                 findmatch = 1;
                             }
                         }
@@ -1262,8 +1267,8 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             }
 
             // The best matching char code
-            row[fx] = best_code_index;
-            set_glyph_usage(glyph_usage_bitmap, best_code_index, 1);
+            row[fx] = best_code_index_diff;
+            set_glyph_usage(glyph_usage_bitmap, best_code_index_diff, 1);
 
             // Start picking color
             if (fv->do_colored_output)
@@ -1343,7 +1348,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                 if (ecp < 0) ecp = 0;
                 else if (ecp > 15) ecp = 15;
 
-                best_score = -9999999.9f;
+                best_score_conv = -9999999.9f;
                 // best_score = 9999999.9f;
                 col = 0;
                 for (i = scp; i <= ecp; i++)
@@ -1354,9 +1359,9 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                         avr_r * palette[j].rgb.r +
                         avr_g * palette[j].rgb.g +
                         avr_b * palette[j].rgb.b;
-                    if (score >= best_score)
+                    if (score >= best_score_conv)
                     {
-                        best_score = score;
+                        best_score_conv = score;
                         col = (uint8_t)j;
                     }
                 }
@@ -1375,7 +1380,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             {
                 uint32_t* raw_row = &f->raw_data_row[sy + y][sx];
                 float* mono_row = &f->mono_data_row[sy + y][sx];
-                float* font_row = &fv->glyph_vertical_array[(size_t)best_code_index * glyph_pixel_count + (size_t)y * fv->glyph_width];
+                float* font_row = &fv->glyph_vertical_array[(size_t)best_code_index_diff * glyph_pixel_count + (size_t)y * fv->glyph_width];
                 for (x = 0; x < (int)fv->glyph_width; x++)
                 {
                     union pixel
