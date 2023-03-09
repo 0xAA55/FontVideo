@@ -1,4 +1,5 @@
 #include"fontvideo.h"
+#include"bunchalloc.h"
 
 #ifdef _WIN32
 #include<Windows.h>
@@ -343,20 +344,6 @@ static void unlock_audio(fontvideo_p fv)
     atomic_exchange(&fv->audio_lock, 0);
 }
 #endif
-
-static void frame_delete(fontvideo_frame_p f)
-{
-    if (!f) return;
-
-    free(f->raw_data); // RGBA pixel data
-    free(f->raw_data_row);
-    free(f->mono_data); // RGBA pixel data
-    free(f->mono_data_row);
-    free(f->data); // Font CharCode data
-    free(f->row);
-    free(f->c_data); // Color data
-    free(f->c_row);
-}
 
 static void audio_delete(fontvideo_audio_p a)
 {
@@ -936,27 +923,57 @@ static void clear_all_glyph_usage(size_t* glyph_usage_bitmap, size_t num_glyph_c
     for (i = 0; i < length; i++) glyph_usage_bitmap[i] = 0;
 }
 
+static void frame_delete(fontvideo_frame_p f)
+{
+    if (!f) return;
+
+    // free(f->raw_data); // RGBA pixel data
+    // free(f->raw_data_row);
+    // free(f->mono_data); // RGBA pixel data
+    // free(f->mono_data_row);
+    // free(f->data); // Font CharCode data
+    // free(f->row);
+    // free(f->c_data); // Color data
+    // free(f->c_row);
+    free(f->glyph_usage_bitmap);
+
+    free(f);
+}
+
 // Create a frame, create buffers, copy the source bitmap, preparing for the rendering
 static fontvideo_frame_p frame_create(fontvideo_p fv, double timestamp, void *bitmap, int bmp_width, int bmp_height, size_t bmp_pitch)
 {
     ptrdiff_t i;
-    fontvideo_frame_p f = calloc(1, sizeof f[0]);
     uint32_t w, h;
+    fontvideo_frame_p f;
+    w = fv->output_w;
+    h = fv->output_h;
+
+    f = bunchalloc(16, sizeof *f,
+        offsetof(fontvideo_frame_t, data), (size_t)w * h * sizeof f->data[0],
+        offsetof(fontvideo_frame_t, c_data), (size_t)w * h * sizeof f->c_data[0],
+        offsetof(fontvideo_frame_t, raw_data), (size_t)bmp_pitch * bmp_height,
+        offsetof(fontvideo_frame_t, mono_data), (size_t)bmp_width * bmp_height * sizeof f->mono_data[0],
+        offsetof(fontvideo_frame_t, row), (size_t)h * sizeof f->row[0],
+        offsetof(fontvideo_frame_t, c_row), (size_t)h * sizeof f->c_row[0],
+        offsetof(fontvideo_frame_t, raw_data_row), (size_t)bmp_height * sizeof f->raw_data_row[0],
+        offsetof(fontvideo_frame_t, mono_data_row), (size_t)bmp_height * sizeof f->mono_data_row[0],
+        0, 0);
+
+    // f = calloc(1, sizeof f[0]);
     if (!f) return f;
 
     f->timestamp = timestamp;
-    w = fv->output_w;
-    h = fv->output_h;
     f->w = w;
     f->h = h;
 
     // Char code buffer
-    f->data = calloc((size_t)w * h, sizeof f->data[0]); if (!f->data) goto FailExit;
-    f->row = calloc(h, sizeof f->row[0]); if (!f->row) goto FailExit;
+    // f->data = calloc((size_t)w * h, sizeof f->data[0]); if (!f->data) goto FailExit;
+    // f->row = calloc(h, sizeof f->row[0]); if (!f->row) goto FailExit;
 
     // Char color buffer
-    f->c_data = calloc((size_t)w * h, sizeof f->c_data[0]); if (!f->c_data) goto FailExit;
-    f->c_row = calloc(h, sizeof f->c_row[0]); if (!f->c_row) goto FailExit;
+    // f->c_data = calloc((size_t)w * h, sizeof f->c_data[0]); if (!f->c_data) goto FailExit;
+    // f->c_row = calloc(h, sizeof f->c_row[0]); if (!f->c_row) goto FailExit;
 
     // Create row pointers for faster access to the matrix slots
     for (i = 0; i < (ptrdiff_t)h; i++)
@@ -968,10 +985,10 @@ static fontvideo_frame_p frame_create(fontvideo_p fv, double timestamp, void *bi
     // Source bitmap buffer
     f->raw_w = bmp_width;
     f->raw_h = bmp_height;
-    f->raw_data = calloc(bmp_height, bmp_pitch); if (!f->raw_data) goto FailExit;
-    f->raw_data_row = calloc(bmp_height, sizeof f->raw_data_row[0]); if (!f->raw_data_row) goto FailExit;
-    f->mono_data = calloc(bmp_height, bmp_width * sizeof f->mono_data[0]); if (!f->mono_data) goto FailExit;
-    f->mono_data_row = calloc(bmp_height, sizeof f->mono_data_row[0]); if (!f->mono_data_row) goto FailExit;
+    // f->raw_data = calloc(bmp_height, bmp_pitch); if (!f->raw_data) goto FailExit;
+    // f->raw_data_row = calloc(bmp_height, sizeof f->raw_data_row[0]); if (!f->raw_data_row) goto FailExit;
+    // f->mono_data = calloc(bmp_height, bmp_width * sizeof f->mono_data[0]); if (!f->mono_data) goto FailExit;
+    // f->mono_data_row = calloc(bmp_height, sizeof f->mono_data_row[0]); if (!f->mono_data_row) goto FailExit;
 
     if (!fv->no_avoid_repetition)
     {
@@ -988,9 +1005,9 @@ static fontvideo_frame_p frame_create(fontvideo_p fv, double timestamp, void *bi
     }
     
     return f;
-FailExit:
-    frame_delete(f);
-    return NULL;
+// FailExit:
+//     frame_delete(f);
+//     return NULL;
 }
 
 static void frame_normalize_input(fontvideo_frame_p f)

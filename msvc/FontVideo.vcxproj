@@ -22,6 +22,7 @@
     <ClCompile Include="..\avdec.c" />
     <ClCompile Include="..\entry.c" />
     <ClCompile Include="..\fontvideo.c" />
+    <ClCompile Include="..\bunchalloc.c" />
     <ClCompile Include="..\siowrap.c" />
     <ClCompile Include="..\unibmp.c" />
     <ClCompile Include="..\utf.c" />
@@ -32,6 +33,7 @@
   <ItemGroup>
     <ClInclude Include="..\avdec.h" />
     <ClInclude Include="..\fontvideo.h" />
+    <ClInclude Include="..\bunchalloc.h" />
     <ClInclude Include="..\siowrap.h" />
     <ClInclude Include="..\unibmp.h" />
     <ClInclude Include="..\utf.h" />
