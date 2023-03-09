@@ -1176,7 +1176,12 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             }
             src_brightness /= glyph_pixel_count;
             src_normalize = src_max - src_min;
-            if (src_normalize <= 0.000001) src_normalize = 1;
+            if (src_normalize <= 0.000001)
+            {
+                src_max = 1;
+                src_min = 0;
+                src_normalize = 1;
+            }
 
             if (1)
             {
