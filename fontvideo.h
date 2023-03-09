@@ -32,6 +32,9 @@ struct fontvideo_frame_struct
 
     float *mono_data;
     float **mono_data_row;
+
+    size_t* glyph_usage_bitmap;
+    atomic_int sl_gub;
     fontvideo_frame_p next;
 };
 
@@ -46,6 +49,12 @@ struct fontvideo_audio_struct
     float *ptr_right;
     size_t step_right;
     fontvideo_audio_p next;
+};
+
+enum matching_algorithm
+{
+    alg_differency,
+    alg_dotproduct
 };
 
 typedef struct fontvideo_struct
@@ -93,6 +102,9 @@ typedef struct fontvideo_struct
 
     // Config: Debug purpose: should write verbose info about threading to log file or not
     int verbose_threading;
+
+    // Config: Which algorithm to use
+    enum matching_algorithm algorithm;
 
     // Assets: which font face will be used for rendering? will change the console window font to match the font face.
     char* font_face;

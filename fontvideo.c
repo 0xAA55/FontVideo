@@ -898,14 +898,55 @@ void normalize_glyph(float* out, const float* in, size_t glyph_pixel_count)
     }
 }
 
+static size_t get_glyph_bitmap_length(size_t num_glyph_codes)
+{
+    return ((num_glyph_codes - 1) / (8 * sizeof(size_t)) + 1);
+}
+
+static size_t* create_glyph_usage_bitmap(size_t num_glyph_codes)
+{
+    return calloc(get_glyph_bitmap_length(num_glyph_codes), sizeof(size_t));
+}
+
+static int get_glyph_usage(size_t* glyph_usage_bitmap, uint32_t code)
+{
+    uint32_t nbit = code % (8 * sizeof glyph_usage_bitmap[0]);
+    size_t unit = code / (8 * sizeof glyph_usage_bitmap[0]);
+    size_t bm = (size_t)1 << nbit;
+    if (!glyph_usage_bitmap) return 0;
+    return (bm & glyph_usage_bitmap[unit]) ? 1 : 0;
+}
+
+static void set_glyph_usage(size_t* glyph_usage_bitmap, uint32_t code, int value)
+{
+    uint32_t nbit = code % (8 * sizeof glyph_usage_bitmap[0]);
+    size_t unit = code / (8 * sizeof glyph_usage_bitmap[0]);
+    size_t bm = (size_t)1 << nbit;
+    if (!glyph_usage_bitmap) return;
+    if (value) glyph_usage_bitmap[unit] |= bm;
+    else glyph_usage_bitmap[unit] &= ~bm;
+}
+
+static void clear_all_glyph_usage(size_t* glyph_usage_bitmap, size_t num_glyph_codes)
+{
+    size_t i;
+    size_t length;
+    if (!glyph_usage_bitmap) return;
+    length = get_glyph_bitmap_length(num_glyph_codes);
+    for (i = 0; i < length; i++) glyph_usage_bitmap[i] = 0;
+}
+
 // Create a frame, create buffers, copy the source bitmap, preparing for the rendering
-static fontvideo_frame_p frame_create(uint32_t w, uint32_t h, double timestamp, void *bitmap, int bmp_width, int bmp_height, size_t bmp_pitch)
+static fontvideo_frame_p frame_create(fontvideo_p fv, double timestamp, void *bitmap, int bmp_width, int bmp_height, size_t bmp_pitch)
 {
     ptrdiff_t i;
     fontvideo_frame_p f = calloc(1, sizeof f[0]);
+    uint32_t w, h;
     if (!f) return f;
 
     f->timestamp = timestamp;
+    w = fv->output_w;
+    h = fv->output_h;
     f->w = w;
     f->h = h;
 
@@ -931,6 +972,11 @@ static fontvideo_frame_p frame_create(uint32_t w, uint32_t h, double timestamp, 
     f->raw_data_row = calloc(bmp_height, sizeof f->raw_data_row[0]); if (!f->raw_data_row) goto FailExit;
     f->mono_data = calloc(bmp_height, bmp_width * sizeof f->mono_data[0]); if (!f->mono_data) goto FailExit;
     f->mono_data_row = calloc(bmp_height, sizeof f->mono_data_row[0]); if (!f->mono_data_row) goto FailExit;
+
+    if (!fv->no_avoid_repetition)
+    {
+        f->glyph_usage_bitmap = create_glyph_usage_bitmap(fv->num_glyph_codes);
+    }
 
     // Copy the source bitmap whilst creating row pointers.
 #pragma omp parallel for
@@ -1026,42 +1072,174 @@ static int brightness_index_compare(const void* bi1, const void* bi2)
     return 0;
 }
 
-static size_t get_glyph_bitmap_length(size_t num_glyph_codes)
+struct matching_status
 {
-    return ((num_glyph_codes - 1) / (8 * sizeof(size_t)) + 1) * sizeof(size_t);
+    uint32_t src_x;
+    uint32_t src_y;
+
+    float src_min;
+    float src_max;
+    float src_range;
+
+    uint32_t start_index;
+    uint32_t end_index;
+};
+
+static int locked_get_glyph_usage(fontvideo_frame_p f, uint32_t code)
+{
+    int ic = 0;
+    int ret = 0;
+    atomic_int xp = 0;
+    if (!f->glyph_usage_bitmap) return 0;
+    while (!atomic_compare_exchange_strong(&f->sl_gub, &xp, 1))
+    {
+        xp = 0;
+        backoff(&ic);
+    }
+    ret = get_glyph_usage(f->glyph_usage_bitmap, code);
+    atomic_store(&f->sl_gub, 0);
+    return ret;
 }
 
-static int get_glyph_usage(size_t* glyph_usage_bitmap, uint32_t code)
+static void locked_set_glyph_usage(fontvideo_frame_p f, uint32_t code, int value)
 {
-    uint32_t nbit = code % (8 * sizeof glyph_usage_bitmap[0]);
-    size_t unit = code / (8 * sizeof glyph_usage_bitmap[0]);
-    size_t bm = (size_t)1 << nbit;
-    if (!glyph_usage_bitmap) return 0;
-    return (bm & glyph_usage_bitmap[unit]) ? 1 : 0;
+    int ic = 0;
+    atomic_int xp = 0;
+    if (!f->glyph_usage_bitmap) return;
+    while (!atomic_compare_exchange_strong(&f->sl_gub, &xp, 1))
+    {
+        xp = 0;
+        backoff(&ic);
+    }
+    set_glyph_usage(f->glyph_usage_bitmap, code, value);
+    atomic_store(&f->sl_gub, 0);
 }
 
-static void set_glyph_usage(size_t* glyph_usage_bitmap, uint32_t code, int value)
+static void locked_clear_all_glyph_usage(fontvideo_frame_p f, size_t num_glyph_codes)
 {
-    uint32_t nbit = code % (8 * sizeof glyph_usage_bitmap[0]);
-    size_t unit = code / (8 * sizeof glyph_usage_bitmap[0]);
-    size_t bm = (size_t)1 << nbit;
-    if (!glyph_usage_bitmap) return;
-    if (value) glyph_usage_bitmap[unit] |= bm;
-    else glyph_usage_bitmap[unit] &= ~bm;
+    int ic = 0;
+    atomic_int xp = 0;
+    if (!f->glyph_usage_bitmap) return;
+    while (!atomic_compare_exchange_strong(&f->sl_gub, &xp, 1))
+    {
+        xp = 0;
+        backoff(&ic);
+    }
+    clear_all_glyph_usage(f->glyph_usage_bitmap, num_glyph_codes);
+    atomic_store(&f->sl_gub, 0);
 }
 
-static void clear_all_glyph_usage(size_t* glyph_usage_bitmap, size_t num_glyph_codes)
+typedef uint32_t(*matching_algorithm)(fontvideo_p fv, fontvideo_frame_p f, struct matching_status* s);
+
+static uint32_t match_by_differency(fontvideo_p fv, fontvideo_frame_p f, struct matching_status* s)
 {
-    size_t i;
-    size_t length;
-    if (!glyph_usage_bitmap) return;
-    length = get_glyph_bitmap_length(num_glyph_codes) / sizeof(size_t);
-    for (i = 0; i < length; i++) glyph_usage_bitmap[i] = 0;
+    size_t num_glyph_codes = fv->num_glyph_codes;
+    uint32_t glyph_pixel_count = fv->glyph_width * fv->glyph_height;
+    uint32_t src_x = s->src_x;
+    uint32_t src_y = s->src_y;
+    float src_min = s->src_min;
+    float src_range = s->src_range;
+    uint32_t cur_code_index;
+    uint32_t best_code_index = s->start_index;
+    int findmatch = 0;
+    for (;;)
+    {
+        double best_score = 9999999999.9f;
+        for (cur_code_index = s->start_index; cur_code_index <= s->end_index; cur_code_index++)
+        {
+            double score = 0;
+            int x, y;
+            float* font_lum_img = &fv->glyph_vertical_array[cur_code_index * glyph_pixel_count];
+
+            // Compare each pixels and collect the scores.
+            for (y = 0; y < (int)fv->glyph_height; y++)
+            {
+                size_t row_start = (size_t)y * fv->glyph_width;
+                float* buf_row = &f->mono_data_row[src_y + y][src_x];
+                float* font_row = &font_lum_img[row_start];
+                for (x = 0; x < (int)fv->glyph_width; x++)
+                {
+                    float src_lum = buf_row[x];
+                    float font_lum = font_row[x];
+                    double nsrc = (double)(src_lum - src_min) / src_range;
+                    double diff = font_lum - nsrc;
+                    score += diff * diff;
+                }
+            }
+
+            if (score <= best_score)
+            {
+                int glyph_used = locked_get_glyph_usage(f, cur_code_index);
+                if (!glyph_used)
+                {
+                    best_score = score;
+                    best_code_index = cur_code_index;
+                    findmatch = 1;
+                }
+            }
+        }
+        if (findmatch) break;
+        locked_clear_all_glyph_usage(f, num_glyph_codes);
+    }
+    return best_code_index;
+}
+
+static uint32_t match_by_dotproduct(fontvideo_p fv, fontvideo_frame_p f, struct matching_status* s)
+{
+    size_t num_glyph_codes = fv->num_glyph_codes;
+    uint32_t glyph_pixel_count = fv->glyph_width * fv->glyph_height;
+    uint32_t src_x = s->src_x;
+    uint32_t src_y = s->src_y;
+    float src_min = s->src_min;
+    float src_range = s->src_range;
+    uint32_t cur_code_index;
+    uint32_t best_code_index = s->start_index;
+    int findmatch = 0;
+    for (;;)
+    {
+        double best_score = -9999999999.9f;
+        for (cur_code_index = s->start_index; cur_code_index <= s->end_index; cur_code_index++)
+        {
+            double score = 0;
+            int x, y;
+            float* font_lum_img = &fv->glyph_vertical_array[cur_code_index * glyph_pixel_count];
+
+            // Compare each pixels and collect the scores.
+            for (y = 0; y < (int)fv->glyph_height; y++)
+            {
+                size_t row_start = (size_t)y * fv->glyph_width;
+                float* buf_row = &f->mono_data_row[src_y + y][src_x];
+                float* font_row = &font_lum_img[row_start];
+                for (x = 0; x < (int)fv->glyph_width; x++)
+                {
+                    float src_lum = buf_row[x];
+                    float font_lum = font_row[x];
+                    double nsrc = (double)(src_lum - src_min) / src_range;
+                    score += (font_lum - 0.5) * (nsrc - 0.5);
+                }
+            }
+            score /= glyph_pixel_count;
+
+            if (score >= best_score)
+            {
+                int glyph_used = locked_get_glyph_usage(f, cur_code_index);
+                if (!glyph_used)
+                {
+                    best_score = score;
+                    best_code_index = cur_code_index;
+                    findmatch = 1;
+                }
+            }
+        }
+        if (findmatch) break;
+        locked_clear_all_glyph_usage(f, num_glyph_codes);
+    }
+    return best_code_index;
 }
 
 static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
 {
-    int fy, fw, fh;
+    uint32_t fy, fw, fh;
     size_t num_glyph_codes = fv->num_glyph_codes;
     uint32_t glyph_pixel_count = fv->glyph_width * fv->glyph_height;
     int i;
@@ -1076,7 +1254,8 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
     static struct brightness_index palette_brightness_index[16] = {0};
     static atomic_int palette_initializing = 0;
     static int palette_initialized = 0;
-    size_t* glyph_usage_bitmap = NULL;
+    size_t* glyph_usage_bitmap = f->glyph_usage_bitmap;
+    matching_algorithm algorithm = match_by_differency;
 
     fw = f->w;
     fh = f->h;
@@ -1119,42 +1298,34 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
     }
 
     if (fv->normalize_input) frame_normalize_input(f);
-    if (!fv->no_avoid_repetition)
-    {
-        glyph_usage_bitmap = malloc(get_glyph_bitmap_length(num_glyph_codes));
-        clear_all_glyph_usage(glyph_usage_bitmap, num_glyph_codes);
-    }
 
     for (fy = 0; fy < fh; fy++)
     {
-        int fx, sx, sy;
+        uint32_t fx, sx, sy;
         uint32_t *row = f->row[fy];
         uint8_t *c_row = f->c_row[fy];
         sy = fy * fv->glyph_height;
+        struct matching_status ms = {0};
+        ms.src_y = sy;
 
         for (fx = 0; fx < fw; fx++)
         {
-            int x, y;
-            int cur_code_index = 0;
-            int best_code_index_diff = 0;
-            int best_code_index_conv = 0;
-            int start_code_position = 0;
-            int end_code_position = 0;
-            int findmatch = 0;
+            uint32_t x, y;
+            uint32_t best_code_index = 0;
+            uint32_t start_code_position = 0;
+            uint32_t end_code_position = 0;
             double src_brightness = 0;
-            float src_min = 999;
-            float src_max = 0;
-            float src_normalize;
-            double best_score_diff = 9999999999.9f;
-            double best_score_conv = 9999999999.9f;
             sx = fx * fv->glyph_width;
+            ms.src_min = 999;
+            ms.src_max = 0;
+            ms.src_x = sx;
 
             // Compute source brightness for further use
-            for (y = 0; y < (int)fv->glyph_height; y++)
+            for (y = 0; y < fv->glyph_height; y++)
             {
                 uint32_t *raw_row = &f->raw_data_row[sy + y][sx];
                 float *buf_row = &f->mono_data_row[sy + y][sx];
-                for (x = 0; x < (int)fv->glyph_width; x++)
+                for (x = 0; x < fv->glyph_width; x++)
                 {
                     union pixel
                     {
@@ -1163,29 +1334,27 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                     }   *src_pixel = (void *)&(raw_row[x]);
                     float src_r, src_g, src_b;
                     float src_lum;
-                    // if (fv->white_background) src_pixel->u32 ^= 0xffffff;
                     src_r = (float)src_pixel->u8[0] / 255.0f;
                     src_g = (float)src_pixel->u8[1] / 255.0f;
                     src_b = (float)src_pixel->u8[2] / 255.0f;
                     src_lum = (float)(sqrt(src_r * src_r + src_g * src_g + src_b * src_b) / sqrt_3);
                     src_brightness += (double)src_lum; // Get brightness
-                    src_min = min(src_min, src_lum);
-                    src_max = max(src_max, src_lum);
+                    ms.src_min = min(ms.src_min, src_lum);
+                    ms.src_max = max(ms.src_max, src_lum);
                     buf_row[x] = src_lum; // Store for normalize
                 }
             }
             src_brightness /= glyph_pixel_count;
-            src_normalize = src_max - src_min;
-            if (src_normalize <= 0.000001)
+            ms.src_range = ms.src_max - ms.src_min;
+            if (ms.src_range <= 0.000001)
             {
-                src_max = 1;
-                src_min = 0;
-                src_normalize = 1;
+                ms.src_max = 1;
+                ms.src_min = 0;
+                ms.src_range = 1;
             }
 
             if (1)
             {
-                int half_window = fv->candidate_glyph_window_size / 2 + 1;
                 int
                     left = 0,
                     right = (int)(num_glyph_codes - 1),
@@ -1208,7 +1377,6 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                     }
                     else
                     {
-                        // start_code_position = left - half_window;
                         start_code_position = (left / fv->candidate_glyph_window_size) * fv->candidate_glyph_window_size;
                         end_code_position = start_code_position + fv->candidate_glyph_window_size - 1;
                         break;
@@ -1216,64 +1384,22 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                     mid = (right + left) / 2;
                     if (mid == left)
                     {
-                        // start_code_position = left - half_window;
                         start_code_position = (left / fv->candidate_glyph_window_size) * fv->candidate_glyph_window_size;
                         end_code_position = start_code_position + fv->candidate_glyph_window_size - 1;
                         break;
                     }
                 }
 
-                // start_code_position = 0;
-                // end_code_position = num_glyph_codes - 1;
-                if (start_code_position < 0) start_code_position = 0;
-                if (end_code_position < start_code_position) end_code_position = start_code_position;
                 if (end_code_position > num_glyph_codes - 1) end_code_position = (int32_t)num_glyph_codes - 1;
-                if (start_code_position > end_code_position) start_code_position = end_code_position;
-                for (;;)
-                {
-                    for (cur_code_index = start_code_position; cur_code_index <= end_code_position; cur_code_index++)
-                    {
-                        double score_diff = 0;
-                        double score_conv = 0;
-                        float* font_lum_img = &fv->glyph_vertical_array[cur_code_index * glyph_pixel_count];
-
-                        // Compare each pixels and collect the scores.
-                        for (y = 0; y < (int)fv->glyph_height; y++)
-                        {
-                            size_t row_start = (size_t)y * fv->glyph_width;
-                            float* buf_row = &f->mono_data_row[sy + y][sx];
-                            float* font_row = &font_lum_img[row_start];
-                            for (x = 0; x < (int)fv->glyph_width; x++)
-                            {
-                                float src_lum = buf_row[x];
-                                float font_lum = font_row[x];
-                                double diff = font_lum - (double)(src_lum - src_min) / src_normalize;
-                                double conv = (font_lum - 0.5) * (src_lum - 0.5);
-                                score_diff += diff * diff;
-                                score_conv += conv;
-                            }
-                        }
-
-                        if (score_diff <= best_score_diff)
-                        {
-                            int glyph_used = get_glyph_usage(glyph_usage_bitmap, cur_code_index);
-                            // if (score == best_score_diff) glyph_used |= (rand() & 1);
-                            if (!glyph_used)
-                            {
-                                best_score_diff = score_diff;
-                                best_code_index_diff = cur_code_index;
-                                findmatch = 1;
-                            }
-                        }
-                    }
-                    if (findmatch) break;
-                    clear_all_glyph_usage(glyph_usage_bitmap, num_glyph_codes);
-                }
             }
 
+            ms.start_index = start_code_position;
+            ms.end_index = end_code_position;
+            best_code_index = algorithm(fv, f, &ms);
+
             // The best matching char code
-            row[fx] = best_code_index_diff;
-            set_glyph_usage(glyph_usage_bitmap, best_code_index_diff, 1);
+            row[fx] = best_code_index;
+            locked_set_glyph_usage(f, best_code_index, 1);
 
             // Start picking color
             if (fv->do_colored_output)
@@ -1287,6 +1413,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                 int hcbw = palette_brightness_window / 2;
                 float sbr, ebr;
                 double rgb_normalize;
+                float best_score_conv;
 
                 // Get the average color of the char from the source frame
                 for (y = 0; y < (int)fv->glyph_height; y++)
@@ -1385,7 +1512,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             {
                 uint32_t* raw_row = &f->raw_data_row[sy + y][sx];
                 float* mono_row = &f->mono_data_row[sy + y][sx];
-                float* font_row = &fv->glyph_vertical_array[(size_t)best_code_index_diff * glyph_pixel_count + (size_t)y * fv->glyph_width];
+                float* font_row = &fv->glyph_vertical_array[(size_t)best_code_index * glyph_pixel_count + (size_t)y * fv->glyph_width];
                 for (x = 0; x < (int)fv->glyph_width; x++)
                 {
                     union pixel
@@ -1402,7 +1529,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                     }
                     if (2)
                     {
-                        uint8_t uv = (uint8_t)((mono_row[x] - src_min) * 255.0 / src_normalize);
+                        uint8_t uv = (uint8_t)((mono_row[x] - ms.src_min) * 255.0 / ms.src_range);
                         src_pixel = (void*)&(mono_row[x]);
                         src_pixel->u8[0] = uv;
                         src_pixel->u8[1] = uv;
@@ -1597,7 +1724,7 @@ static void fv_on_get_video(avdec_p av, void *bitmap, int width, int height, siz
     fontvideo_p fv = av->userdata;
     fontvideo_frame_p f;
 
-    f = frame_create(fv->output_w, fv->output_h, timestamp, bitmap, width, height, pitch);
+    f = frame_create(fv, timestamp, bitmap, width, height, pitch);
     if (!f)
     {
         return;
