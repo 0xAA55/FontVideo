@@ -1255,7 +1255,18 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
     static atomic_int palette_initializing = 0;
     static int palette_initialized = 0;
     size_t* glyph_usage_bitmap = f->glyph_usage_bitmap;
-    matching_algorithm algorithm = match_by_differency;
+    matching_algorithm algorithm;;
+
+    switch (fv->algorithm)
+    {
+    default:
+    case alg_differency:
+        algorithm = match_by_differency;
+        break;
+    case alg_dotproduct:
+        algorithm = match_by_dotproduct;
+        break;
+    }
 
     fw = f->w;
     fh = f->h;

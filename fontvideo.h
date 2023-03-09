@@ -53,8 +53,10 @@ struct fontvideo_audio_struct
 
 enum matching_algorithm
 {
+    alg_none = 0,
     alg_differency,
-    alg_dotproduct
+    alg_dotproduct,
+    alg_last
 };
 
 typedef struct fontvideo_struct

@@ -13,7 +13,7 @@
 
 void usage(char *argv0)
 {
-    fprintf(stderr, "Usage: %s -i <input> [-o <output.txt>] [-v] [-p <seconds>] [-m] [-n] [-w <width>] [-h <height>] [-s <width> <height>] [-S <from_sec>] [-b] [--white-background] [--no-frameskip] [--no-avoid-repetition] [--no-auto-aspect-adjust] [--assets-meta <metafile.ini>] [--output-frame-image-sequence <prefix>]\n"
+    fprintf(stderr, "Usage: %s -i <input> [-o <output.txt>] [-v] [-p <seconds>] [-m] [-n] [-w <width>] [-h <height>] [-s <width> <height>] [-S <from_sec>] [-b] [--white-background] [--no-frameskip] [--algorithm <1|2>] [--no-avoid-repetition] [--no-auto-aspect-adjust] [--assets-meta <metafile.ini>] [--output-frame-image-sequence <prefix>]\n"
         "Or: %s <input>\n"
         "\t-i: Specify the input video file name.\n"
         "\t-o: [Optional] Specify the output text file name.\n"
@@ -39,6 +39,9 @@ void usage(char *argv0)
         "\t--log: [Optional] Specify the log file.\n"
         "\t--white-background: [Optional] Do color invert.\n"
         "\t  Alias: --white-bg\n"
+        "\t--algorithm: [Optional] Specify the algorithm:\n"
+        "\t  * 1: differency (default)\n"
+        "\t  * 2: dot product\n"
         "\t--no-frameskip: [Optional] Do not skip frames, which may cause video and audio could not sync.\n"
         "\t--no-avoid-repetition: [Optional] Do not try to avoid repetition of using glyphs.\n"
         "\t--no-auto-aspect-adjust: [Optional] Do not adjsut aspect ratio by changing output width automatically.\n"
@@ -67,6 +70,7 @@ int main(int argc, char **argv)
     int no_frameskip = 0;
     int no_avoid_repetition = 0;
     int no_auto_aspect_adjust = 0;
+    int algorithm = alg_differency;
     char *assets_meta = "assets"SUBDIR"meta.ini";
     char *output_frame_images_prefix = NULL;
     FILE *fp_log = stderr;
@@ -206,6 +210,16 @@ int main(int argc, char **argv)
             {
                 if (++i >= argc) goto BadUsageExit;
                 assets_meta = argv[i++];
+            }
+            else if (!strcmp(argv[i], "--algorithm"))
+            {
+                if (++i >= argc) goto BadUsageExit;
+                algorithm = atoi(argv[i++]);
+                if (algorithm <= alg_none || algorithm >= alg_last)
+                {
+                    fprintf(stderr, "Unknown algorithm: %d.\n", algorithm);
+                    goto BadUsageExit;
+                }
             }
             else if (!strcmp(argv[i], "--output-frame-image-sequence"))
             {
