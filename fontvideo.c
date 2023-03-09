@@ -289,6 +289,12 @@ static union colorBGR
     {{255, 255, 255}}
 };
 
+#define _PADDED(value, unit) (((value) - 1) / (unit) + 1) * (unit)
+static ptrdiff_t make_padded(ptrdiff_t value, int unit)
+{
+    return _PADDED(value, unit);
+}
+
 // For locking the frames link list of `fv->frames` and `fv->frame_last`, not for locking every individual frames
 static void lock_frame(fontvideo_p fv)
 {
@@ -562,6 +568,7 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
     size_t font_count_max = 0;
     size_t expected_font_code_count = 0;
     size_t glyph_pixel_count;
+    double max_brightness;
 
     // snprintf(buf, sizeof buf, "%s"SUBDIR"%s", assets_dir, meta_file);
     d_meta = dictcfg_load(meta_file, log_fp); // Parse ini file
@@ -693,6 +700,7 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
     }
 
     fv->font_is_blackwhite = 1;
+    max_brightness = sqrt(glyph_pixel_count);
 #pragma omp parallel for
     for (si = 0; si < (ptrdiff_t)fv->num_glyph_codes; si++)
     {
@@ -726,10 +734,10 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
                 }
                 if (fv->white_background) gp_lum = 1.0f - gp_lum;
                 lum_row[x] = gp_lum;
-                glyph_brightness += gp_lum;
+                glyph_brightness += gp_lum * gp_lum;
             }
         }
-        glyph_brightness /= glyph_pixel_count;
+        glyph_brightness = sqrt(glyph_brightness) / max_brightness;
         fv->glyph_brightness[si] = glyph_brightness;
     }
 
@@ -878,7 +886,7 @@ void normalize_glyph(float* out, const float* in, size_t glyph_pixel_count)
 
     for (i = 0; i < glyph_pixel_count; i++)
     {
-        double in_val = in[i] - 0.5;
+        double in_val = in[i];
         lengthsq += in_val * in_val;
     }
 
@@ -887,7 +895,7 @@ void normalize_glyph(float* out, const float* in, size_t glyph_pixel_count)
     
     for (i = 0; i < glyph_pixel_count; i++)
     {
-        double in_val = in[i] - 0.5;
+        double in_val = in[i];
         out[i] = (float)(in_val / length);
     }
 }
@@ -1053,16 +1061,12 @@ static void clear_all_glyph_usage(size_t* glyph_usage_bitmap, size_t num_glyph_c
     for (i = 0; i < length; i++) glyph_usage_bitmap[i] = 0;
 }
 
-static int make_padding(int value, int pad)
-{
-    return ((value - 1) / pad + 1) * pad;
-}
-
 static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
 {
     int fy, fw, fh;
     size_t num_glyph_codes = fv->num_glyph_codes;
     uint32_t glyph_pixel_count = fv->glyph_width * fv->glyph_height;
+    double max_brightness = sqrt(glyph_pixel_count);
     int i;
     static union color
     {
@@ -1139,26 +1143,22 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             int start_code_position = 0;
             int end_code_position = 0;
             int findmatch = 0;
-            double src_normalize = 0;
             double src_brightness = 0;
-            double best_score = -9999999.9f;
-            // Monochrome image buffer of a single char in a frame
-            float* src_lum_buffer;
+            double best_score = 9999999999.9f;
             sx = fx * fv->glyph_width;
-            src_lum_buffer = &f->mono_data_row[sy][sx];
 
             // Compute source brightness for further use
             for (y = 0; y < (int)fv->glyph_height; y++)
             {
-                uint32_t *raw_row = f->raw_data_row[sy + y];
-                float *buf_row = &src_lum_buffer[y * fv->glyph_width];
+                uint32_t *raw_row = &f->raw_data_row[sy + y][sx];
+                float *buf_row = &f->mono_data_row[sy + y][sx];
                 for (x = 0; x < (int)fv->glyph_width; x++)
                 {
                     union pixel
                     {
                         uint8_t u8[4];
                         uint32_t u32;
-                    }   *src_pixel = (void *)&(raw_row[sx + x]);
+                    }   *src_pixel = (void *)&(raw_row[x]);
                     float src_r, src_g, src_b;
                     float src_lum;
                     // if (fv->white_background) src_pixel->u32 ^= 0xffffff;
@@ -1166,15 +1166,11 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                     src_g = (float)src_pixel->u8[1] / 255.0f;
                     src_b = (float)src_pixel->u8[2] / 255.0f;
                     src_lum = (float)(sqrt(src_r * src_r + src_g * src_g + src_b * src_b) / sqrt_3);
-                    src_brightness += (double)src_lum; // Get brightness
-                    src_lum -= 0.5f; // Bias for convolutional
+                    src_brightness += (double)src_lum * src_lum; // Get brightness
                     buf_row[x] = src_lum; // Store for normalize
-                    src_normalize += (double)src_lum * src_lum; // LengthSq
                 }
             }
-            src_brightness /= glyph_pixel_count;
-            src_normalize = sqrt(src_normalize);
-            if (src_normalize < 0.000001) src_normalize = 1;
+            src_brightness = sqrt(src_brightness) / max_brightness;
 
             if (1)
             {
@@ -1234,17 +1230,18 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                         for (y = 0; y < (int)fv->glyph_height; y++)
                         {
                             size_t row_start = (size_t)y * fv->glyph_width;
-                            float* buf_row = &src_lum_buffer[row_start];
+                            float* buf_row = &f->mono_data_row[sy + y][sx];
                             float* font_row = &font_lum_img[row_start];
                             for (x = 0; x < (int)fv->glyph_width; x++)
                             {
-                                double src_lum = buf_row[x] / src_normalize;
+                                float src_lum = buf_row[x];
                                 float font_lum = font_row[x];
-                                score += src_lum * font_lum;
+                                float diff = font_lum - src_lum;
+                                score += diff * diff;
                             }
                         }
 
-                        if (score >= best_score)
+                        if (score <= best_score)
                         {
                             int glyph_used = get_glyph_usage(glyph_usage_bitmap, cur_code_index);
                             // if (score == best_score) glyph_used |= (rand() & 1);
@@ -1288,45 +1285,23 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                 const int palette_brightness_window = 12;
                 int hcbw = palette_brightness_window / 2;
                 float sbr, ebr;
+                double rgb_normalize;
 
                 // Get the average color of the char from the source frame
                 for (y = 0; y < (int)fv->glyph_height; y++)
                 {
-                    uint32_t* raw_row = f->raw_data_row[sy + y];
-#ifdef DEBUG_OUTPUT_TO_SCREEN
-                    size_t row_start = (size_t)y * fv->glyph_width;
-                    float* font_row = &fv->glyph_vertical_array[(size_t)best_code_index * glyph_pixel_count + row_start];
-                    float* buf_row = &src_lum_buffer[y * fv->glyph_width];
-#endif
+                    uint32_t* raw_row = &f->raw_data_row[sy + y][sx];
                     for (x = 0; x < (int)fv->glyph_width; x++)
                     {
                         union pixel
                         {
                             uint8_t u8[4];
                             uint32_t u32;
-                        }   *src_pixel = (void*)&(raw_row[sx + x]);
+                        }   *src_pixel = (void*)&(raw_row[x]);
 
                         avr_b += (float)src_pixel->u8[0] / 255.0f;
                         avr_g += (float)src_pixel->u8[1] / 255.0f;
                         avr_r += (float)src_pixel->u8[2] / 255.0f;
-
-#ifdef DEBUG_OUTPUT_TO_SCREEN
-                        if (1)
-                        {
-                            // uint8_t uv = (uint8_t)((font_row[x] + 0.5) * 255.0f);
-                            uint8_t uv = (uint8_t)(font_row[x] * 255.0f);
-                            src_pixel->u8[0] = uv;
-                            src_pixel->u8[1] = uv;
-                            src_pixel->u8[2] = uv;
-                        }
-                        else
-                        {
-                            uint8_t uv = (uint8_t)(buf_row[x] * 255.0f);
-                            src_pixel->u8[0] = uv;
-                            src_pixel->u8[1] = uv;
-                            src_pixel->u8[2] = uv;
-                        }
-#endif
                     }
                 }
 
@@ -1337,12 +1312,12 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                 avr_b -= 0.5f;
                 avr_g -= 0.5f;
                 avr_r -= 0.5f;
-                src_normalize = sqrt(avr_r * avr_r + avr_g * avr_g + avr_b * avr_b);
-                if (src_normalize < 0.000001) src_normalize = 1;
-                avr_b = (float)(avr_b / src_normalize);
-                avr_g = (float)(avr_g / src_normalize);
-                avr_r = (float)(avr_r / src_normalize);
-                avr_brightness = src_normalize / sqrt_3;
+                rgb_normalize = sqrt(avr_r * avr_r + avr_g * avr_g + avr_b * avr_b);
+                if (rgb_normalize < 0.000001) rgb_normalize = 1;
+                avr_b = (float)(avr_b / rgb_normalize);
+                avr_g = (float)(avr_g / rgb_normalize);
+                avr_r = (float)(avr_r / rgb_normalize);
+                avr_brightness = rgb_normalize / sqrt_3;
 
                 scp = 0;
                 ecp = 15;
@@ -1404,6 +1379,37 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             {
                 c_row[fx] = 15;
             }
+#ifdef DEBUG_OUTPUT_TO_SCREEN
+            for (y = 0; y < (int)fv->glyph_height; y++)
+            {
+                uint32_t* raw_row = &f->raw_data_row[sy + y][sx];
+                float* mono_row = &f->mono_data_row[sy + y][sx];
+                float* font_row = &fv->glyph_vertical_array[(size_t)best_code_index * glyph_pixel_count + (size_t)y * fv->glyph_width];
+                for (x = 0; x < (int)fv->glyph_width; x++)
+                {
+                    union pixel
+                    {
+                        uint8_t u8[4];
+                        uint32_t u32;
+                    }   *src_pixel = (void*)&(raw_row[x]);
+                    if (1)
+                    {
+                        uint8_t uv = (uint8_t)(font_row[x]) * 255.0f);
+                        src_pixel->u8[0] = uv;
+                        src_pixel->u8[1] = uv;
+                        src_pixel->u8[2] = uv;
+                    }
+                    if (2)
+                    {
+                        uint8_t uv = (uint8_t)((mono_row[x] * 255.0f);
+                        src_pixel = (void*)&(mono_row[x]);
+                        src_pixel->u8[0] = uv;
+                        src_pixel->u8[1] = uv;
+                        src_pixel->u8[2] = uv;
+                    }
+                }
+            }
+#endif
         }
     }
     free(glyph_usage_bitmap);
@@ -1436,6 +1442,7 @@ static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
 
 #ifdef DEBUG_OUTPUT_TO_SCREEN
     DebugRawBitmap(0, 0, f->raw_data, f->raw_w, f->raw_h);
+    DebugRawBitmap(0, f->raw_h, f->mono_data, f->raw_w, f->raw_h);
 #endif
 }
 
