@@ -1281,7 +1281,6 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
     static struct brightness_index palette_brightness_index[16] = {0};
     static atomic_int palette_initializing = 0;
     static int palette_initialized = 0;
-    size_t* glyph_usage_bitmap = f->glyph_usage_bitmap;
     matching_algorithm algorithm;
 
     switch (fv->algorithm)
@@ -1578,7 +1577,6 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
 #endif
         }
     }
-    free(glyph_usage_bitmap);
     if (fv->verbose)
     {
         fprintf(fv->log_fp, "Finished CPU rendering a frame. (%u)\n", get_thread_id());
