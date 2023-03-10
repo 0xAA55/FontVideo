@@ -15,7 +15,7 @@
 #include"utf.h"
 
 #ifdef _DEBUG
-#   define DEBUG_OUTPUT_TO_SCREEN 1
+#   define DEBUG_OUTPUT_TO_SCREEN 0
 #   define DEBUG_BGRX(r, g, b) (0xff000000 | (uint8_t)(b) | ((uint32_t)((uint8_t)(g)) << 8) | ((uint32_t)((uint8_t)(r)) << 16))
 #endif
 
@@ -30,7 +30,7 @@ static uint32_t get_thread_id()
 #ifdef _WIN32
 #define SUBDIR "\\"
 
-#if defined(_DEBUG) && defined(DEBUG_OUTPUT_TO_SCREEN)
+#if defined(_DEBUG) && DEBUG_OUTPUT_TO_SCREEN
 void DebugRawBitmap(int dst_x, int dst_y, void *bitmap, int bmp_w, int bmp_h)
 {
     HDC hDC = GetDC(NULL);
@@ -857,7 +857,7 @@ int sort_glyph_codes_by_brightness(fontvideo_p fv)
     fv->glyph_vertical_array = glyph_array;
     free(cl_array);
 
-#ifdef DEBUG_OUTPUT_TO_SCREEN
+#if DEBUG_OUTPUT_TO_SCREEN
     DebugRawBitmap(0, 0, fv->glyph_matrix->BitmapData, fv->glyph_matrix->Width, fv->glyph_matrix->Height);
 #endif
     return 1;
@@ -1545,7 +1545,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
             {
                 c_row[fx] = 15;
             }
-#ifdef DEBUG_OUTPUT_TO_SCREEN
+#if DEBUG_OUTPUT_TO_SCREEN
             for (y = 0; y < (int)fv->glyph_height; y++)
             {
                 uint32_t* raw_row = &f->raw_data_row[sy + y][sx];
@@ -1595,7 +1595,7 @@ static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
 
     f->rendering_time_consuming = rttimer_gettime(&fv->tmr) - f->rendering_start_time;
 
-#ifdef DEBUG_OUTPUT_TO_SCREEN
+#if DEBUG_OUTPUT_TO_SCREEN
     DebugRawBitmap(0, 0, f->raw_data, f->raw_w, f->raw_h);
     DebugRawBitmap(0, f->raw_h, f->mono_data, f->raw_w, f->raw_h);
 #endif
@@ -2415,7 +2415,7 @@ fontvideo_p fv_create
     if (!fv) return fv;
     fv->log_fp = log_fp;
 #ifdef _DEBUG
-    log_verbose = 1;
+    // log_verbose = 1;
 #endif
     fv->verbose = log_verbose;
     fv->verbose_threading = log_verbose_threading;
