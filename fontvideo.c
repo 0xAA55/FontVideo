@@ -345,11 +345,16 @@ static void unlock_audio(fontvideo_p fv)
 }
 #endif
 
-static void audio_delete(fontvideo_audio_p a)
+static void audio_delete(fontvideo_audio_p* pa)
 {
+    fontvideo_audio_p a;
+    if (!pa) return;
+    a = *pa;
     if (!a) return;
+    *pa = NULL;
 
-    free(a->buffer);
+    // free(a->buffer);
+    free(a);
 }
 
 // Move a pointer by bytes
@@ -424,7 +429,7 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
         {
             if (current_time > next->timestamp)
             {
-                audio_delete(fv->audios);
+                audio_delete(&fv->audios);
                 fv->audios = next;
                 continue;
             }
@@ -466,7 +471,7 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
         }
         if (wrote >= fv->audios->frames)
         {
-            audio_delete(fv->audios);
+            audio_delete(&fv->audios);
             fv->audios = next;
         }
         else // If the current audio piece is not all written, reserve the rest of the frames for the next callback.
@@ -483,7 +488,7 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
             fv->audios = replace;
 
             // Delete the current piece
-            audio_delete(next);
+            audio_delete(&next);
 
             // Done writing audio
             break;
@@ -1665,13 +1670,17 @@ static fontvideo_audio_p audio_create(void *samples, int channel_count, size_t n
     float *src = samples;
     
     if (channel_count < 1 || channel_count > 2) return a;
+
+    a = bunchalloc(16, sizeof *a, 
+        offsetof(fontvideo_audio_t, buffer), num_samples_per_channel * channel_count * sizeof a->buffer[0],
+        0, 0);
     
-    a = calloc(1, sizeof a[0]);
+    // a = calloc(1, sizeof a[0]);
     if (!a) return a;
 
     a->timestamp = timestamp;
     a->frames = num_samples_per_channel;
-    a->buffer = calloc(num_samples_per_channel * channel_count, sizeof a->buffer[0]);
+    // a->buffer = calloc(num_samples_per_channel * channel_count, sizeof a->buffer[0]);
     if (!a->buffer) goto FailExit;
     switch (channel_count)
     {
@@ -1702,7 +1711,7 @@ static fontvideo_audio_p audio_create(void *samples, int channel_count, size_t n
 
     return a;
 FailExit:
-    audio_delete(a);
+    audio_delete(&a);
     return NULL;
 }
 
@@ -2657,7 +2666,7 @@ void fv_destroy(fontvideo_p fv)
     while (fv->audios)
     {
         fontvideo_audio_p next = fv->audios->next;
-        audio_delete(fv->audios);
+        audio_delete(&fv->audios);
         fv->audios = next;
     }
 #endif
