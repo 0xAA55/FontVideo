@@ -297,17 +297,17 @@ static ptrdiff_t make_padded(ptrdiff_t value, int unit)
 }
 
 // For locking the frames link list of `fv->frames` and `fv->frame_last`, not for locking every individual frames
-static void lock_frame(fontvideo_p fv)
+static void lock_frame_linklist(fontvideo_p fv)
 {
     uint32_t readout = 0;
     uint32_t cur_id = get_thread_id();
     int bo = 0;
     while (
         // First, do a non-atomic test for a quick peek.
-        ((readout = fv->frame_lock) != 0) ||
+        ((readout = fv->frame_linklist_lock) != 0) ||
 
         // Then, perform the actual atomic operation for acquiring the lock.
-        ((readout = atomic_exchange(&fv->frame_lock, cur_id)) != 0))
+        ((readout = atomic_exchange(&fv->frame_linklist_lock, cur_id)) != 0))
     {
         if (fv->verbose_threading)
         {
@@ -317,19 +317,19 @@ static void lock_frame(fontvideo_p fv)
     }
 }
 
-static void unlock_frame(fontvideo_p fv)
+static void unlock_frame_linklist(fontvideo_p fv)
 {
-    atomic_exchange(&fv->frame_lock, 0);
+    atomic_exchange(&fv->frame_linklist_lock, 0);
 }
 
 #ifndef FONTVIDEO_NO_SOUND
 // Same mechanism for locking audio link list.
-static void lock_audio(fontvideo_p fv)
+static void lock_audio_linklist(fontvideo_p fv)
 {
     uint32_t readout;
     uint32_t cur_id = get_thread_id();
     int bo = 0;
-    while ((readout = atomic_exchange(&fv->audio_lock, cur_id)) != 0)
+    while ((readout = atomic_exchange(&fv->audio_linklist_lock, cur_id)) != 0)
     {
         if (fv->verbose_threading)
         {
@@ -339,9 +339,9 @@ static void lock_audio(fontvideo_p fv)
     }
 }
 
-static void unlock_audio(fontvideo_p fv)
+static void unlock_audio_linklist(fontvideo_p fv)
 {
-    atomic_exchange(&fv->audio_lock, 0);
+    atomic_exchange(&fv->audio_linklist_lock, 0);
 }
 #endif
 
@@ -403,7 +403,7 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
     }
 
     // Because the next operations will change the audio link list, so lock it up.
-    lock_audio(fv);
+    lock_audio_linklist(fv);
     while (fv->audios)
     {
         // Next audio piece in the link list
@@ -501,7 +501,7 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
         fv->audio_last = NULL;
 
         // No need to keep the lock, release ASAP
-        unlock_audio(fv);
+        unlock_audio_linklist(fv);
 
         // Check if the buffer isn't all filled, then fill if not.
         if (total < samples_to_write_per_channel)
@@ -533,7 +533,7 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
     else
     {
         // Make sure the link list is unlocked properly.
-        unlock_audio(fv);
+        unlock_audio_linklist(fv);
     }
     return total;
 }
@@ -1282,7 +1282,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
     static atomic_int palette_initializing = 0;
     static int palette_initialized = 0;
     size_t* glyph_usage_bitmap = f->glyph_usage_bitmap;
-    matching_algorithm algorithm;;
+    matching_algorithm algorithm;
 
     switch (fv->algorithm)
     {
@@ -1590,26 +1590,21 @@ static void render_frame_from_rgbabitmap(fontvideo_p fv, fontvideo_frame_p f)
 {
     if (f->rendered) return;
 
-    lock_frame(fv);
-    fv->rendering_frame_count++;
+    atomic_fetch_add(&fv->rendering_frame_count, 1);
     f->rendering_start_time = rttimer_gettime(&fv->tmr);
-    unlock_frame(fv);
-
     do_cpu_render(fv, f);
 
     f->rendering_time_consuming = rttimer_gettime(&fv->tmr) - f->rendering_start_time;
-
-    // Finished rendering, update statistics
-    atomic_exchange(&f->rendered, get_thread_id());
-    lock_frame(fv);
-    fv->rendered_frame_count++;
-    fv->rendering_frame_count--;
-    unlock_frame(fv);
 
 #ifdef DEBUG_OUTPUT_TO_SCREEN
     DebugRawBitmap(0, 0, f->raw_data, f->raw_w, f->raw_h);
     DebugRawBitmap(0, f->raw_h, f->mono_data, f->raw_w, f->raw_h);
 #endif
+
+    // Finished rendering, update statistics
+    atomic_exchange(&f->rendered, get_thread_id());
+    atomic_fetch_sub(&fv->rendering_frame_count, 1);
+    atomic_fetch_add(&fv->rendered_frame_count, 1);
 }
 
 // Lock the link list of the frames, insert the frame into the link list, preserve the ordering.
@@ -1619,11 +1614,11 @@ static void locked_add_frame_to_fv(fontvideo_p fv, fontvideo_frame_p f)
     double timestamp;
     fontvideo_frame_p iter;
 
-    lock_frame(fv);
+    lock_frame_linklist(fv);
 
     timestamp = f->timestamp;
-    f->index = fv->frame_counter++;
-    fv->precached_frame_count ++;
+    f->index = atomic_fetch_add(&fv->frame_counter, 1);
+    atomic_fetch_add(&fv->precached_frame_count, 1);
 
     if (!fv->frames)
     {
@@ -1658,7 +1653,7 @@ static void locked_add_frame_to_fv(fontvideo_p fv, fontvideo_frame_p f)
         iter = iter->next;
     }
 Unlock:
-    unlock_frame(fv);
+    unlock_frame_linklist(fv);
 }
 
 #ifndef FONTVIDEO_NO_SOUND
@@ -1722,7 +1717,7 @@ static void locked_add_audio_to_fv(fontvideo_p fv, fontvideo_audio_p a)
     
     timestamp = a->timestamp;
 
-    lock_audio(fv);
+    lock_audio_linklist(fv);
 
     if (!fv->audios)
     {
@@ -1757,7 +1752,7 @@ static void locked_add_audio_to_fv(fontvideo_p fv, fontvideo_audio_p a)
         iter = iter->next;
     }
 Unlock:
-    unlock_audio(fv);
+    unlock_audio_linklist(fv);
 }
 #endif
 
@@ -1795,12 +1790,11 @@ static int get_frame_and_render(fontvideo_p fv)
 {
     fontvideo_frame_p f = NULL, prev = NULL;
     if (!fv->frames) return 0;
-    lock_frame(fv);
     if (fv->precached_frame_count <= fv->rendered_frame_count + fv->rendering_frame_count)
     {
-        unlock_frame(fv);
         return 0;
     }
+    lock_frame_linklist(fv);
     f = fv->frames;
     while (f)
     {
@@ -1830,15 +1824,15 @@ static int get_frame_and_render(fontvideo_p fv)
                     if (!next)
                     {
                         fv->frame_last = NULL;
-                        fv->precached_frame_count--;
-                        unlock_frame(fv);
+                        atomic_fetch_sub(&fv->precached_frame_count, 1);
+                        unlock_frame_linklist(fv);
                         return 0;
                     }
                     else
                     {
                         frame_delete(&f);
                         f = fv->frames = next;
-                        fv->precached_frame_count--;
+                        atomic_fetch_sub(&fv->precached_frame_count, 1);
                         continue;
                     }
                 }
@@ -1847,7 +1841,7 @@ static int get_frame_and_render(fontvideo_p fv)
                     prev->next = next;
                     frame_delete(&f);
                     f = next;
-                    fv->precached_frame_count--;
+                    atomic_fetch_sub(&fv->precached_frame_count, 1);
                     continue;
                 }
             }
@@ -1857,7 +1851,7 @@ static int get_frame_and_render(fontvideo_p fv)
                 {
                     fprintf(fv->log_fp, "Got frame to render. (%u)\n", get_thread_id());
                 }
-                unlock_frame(fv);
+                unlock_frame_linklist(fv);
                 render_frame_from_rgbabitmap(fv, f);
                 return 1;
             }
@@ -1870,7 +1864,7 @@ static int get_frame_and_render(fontvideo_p fv)
             continue;
         }
     }
-    unlock_frame(fv);
+    unlock_frame_linklist(fv);
     return f ? 1 : 0;
 }
 
@@ -2080,124 +2074,17 @@ FailExit:
     return 0;
 }
 
-static int output_rendered_video(fontvideo_p fv, double timestamp)
+static void output_frame(fontvideo_p fv, fontvideo_frame_p f)
 {
-    fontvideo_frame_p cur = NULL, next = NULL, prev = NULL;
-    int cur_color = 0;
-    int discard_threshold = 0;
-
-    if (!fv->frames) return 0;
-    if (!fv->rendered_frame_count) return 0;
-
-    if (atomic_exchange(&fv->doing_output, 1))
-    {
-        return 0;
-    }
-
-    lock_frame(fv);
-    cur = fv->frames;
-    if (!cur)
-    {
-        unlock_frame(fv);
-        goto FailExit;
-    }
-    // If output is too slow, skip frames.
-    if (fv->real_time_play && timestamp >= 0)
-    {
-        while(1)
-        {
-            next = cur->next;
-            if (!next) break;
-            if (!fv->no_frameskip && timestamp >= cur->timestamp)
-            {
-                // Timestamp arrived
-                if (timestamp < next->timestamp) break;
-
-                // If the next frame also need to output right now, skip the current frame
-                discard_threshold++;
-                if (discard_threshold >= discard_frame_num_threshold)
-                {
-                    if (cur->rendered)
-                    {
-                        if (fv->verbose)
-                        {
-                            fprintf(fv->log_fp, "Discarding rendered frame %u due to lag. (%u)\n", cur->index, get_thread_id());
-                        }
-
-                        if (fv->frames == cur)
-                        {
-                            fv->frames = next;
-                        }
-                        else
-                        {
-                            if (!prev) prev = fv->frames;
-                            prev->next = next;
-                        }
-                        frame_delete(&cur);
-                        cur = next;
-                        fv->precached_frame_count--;
-                        fv->rendered_frame_count--;
-                    }
-                    else
-                    {
-                        atomic_int expected = 0;
-
-                        // Acquire it to prevent it from being rendered
-                        if (atomic_compare_exchange_strong(&cur->rendering, &expected, get_thread_id()))
-                        {
-                            fprintf(fv->log_fp, "Discarding frame %u to render due to lag. (%u)\n", cur->index, get_thread_id());
-
-                            if (fv->frames == cur)
-                            {
-                                fv->frames = next;
-                            }
-                            else
-                            {
-                                if (!prev) prev = fv->frames;
-                                prev->next = next;
-                            }
-                            frame_delete(&cur);
-                            cur = next;
-                            fv->precached_frame_count--;
-                        }
-                        else
-                        {
-                            // It's acquired by a rendering thread, skip it.
-                            prev = cur;
-                            cur = next;
-                        }
-                    }
-                }
-            }
-            else
-            {
-                // Timestamp not arrived to this frame
-                break;
-            }
-        }
-    }
-    if (timestamp < 0 || timestamp >= cur->timestamp || !fv->real_time_play)
-    {
-        uint32_t x, y;
-        next = cur->next;
-        unlock_frame(fv);
-#if !defined(_DEBUG)
-        if (fv->real_time_play)
-        {
-            set_cursor_xy(0, 0);
-        }
-#endif
-        if (!cur->rendered)
-        {
-            unlock_frame(fv);
-            goto FailExit;
-        }
 #pragma omp parallel sections
-        {
+    {
 #pragma omp section
+        if (1)
+        {
+            uint32_t x, y;
+            int done_output = 0;
             if (fv->do_colored_output)
             {
-                int done_output = 0;
 #ifdef _WIN32
                 if (fv->do_old_console_output)
                 {
@@ -2212,16 +2099,16 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                     }
                     if (fv->old_console_buffer)
                     {
-                        CHAR_INFO *ci = fv->old_console_buffer;
-                        COORD BufferSize = {(SHORT)fv->output_w, (SHORT)fv->output_h};
-                        COORD BufferCoord = {0, 0};
-                        SMALL_RECT sr = {0, 0, (SHORT)fv->output_w - 1, (SHORT)fv->output_h - 1};
-                        for (y = 0; y < cur->h && y < fv->output_h; y++)
+                        CHAR_INFO* ci = fv->old_console_buffer;
+                        COORD BufferSize = { (SHORT)fv->output_w, (SHORT)fv->output_h };
+                        COORD BufferCoord = { 0, 0 };
+                        SMALL_RECT sr = { 0, 0, (SHORT)fv->output_w - 1, (SHORT)fv->output_h - 1 };
+                        for (y = 0; y < f->h && y < fv->output_h; y++)
                         {
-                            CHAR_INFO *dst_row = &ci[y * fv->output_w];
-                            uint32_t *row = cur->row[y];
-                            uint8_t *c_row = cur->c_row[y];
-                            for (x = 0; x < cur->w && x < fv->output_w; x++)
+                            CHAR_INFO* dst_row = &ci[y * fv->output_w];
+                            uint32_t* row = f->row[y];
+                            uint8_t* c_row = f->c_row[y];
+                            for (x = 0; x < f->w && x < fv->output_w; x++)
                             {
                                 uint32_t Char = fv->glyph_codes[row[x]];
                                 uint8_t Color = c_row[x];
@@ -2241,20 +2128,20 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
 #endif
                 if (!done_output)
                 {
-                    char *u8chr = fv->utf8buf;
-                    cur_color = cur->c_row[0][0];
+                    char* u8chr = fv->utf8buf;
+                    int cur_color = f->c_row[0][0];
                     memset(fv->utf8buf, 0, fv->utf8buf_size);
                     set_console_color(fv, cur_color);
                     u8chr = strchr(u8chr, 0);
-                    for (y = 0; y < cur->h; y++)
+                    for (y = 0; y < f->h; y++)
                     {
-                        uint32_t *row = cur->row[y];
-                        uint8_t *c_row = cur->c_row[y];
-                        for (x = 0; x < cur->w; x++)
+                        uint32_t* row = f->row[y];
+                        uint8_t* c_row = f->c_row[y];
+                        for (x = 0; x < f->w; x++)
                         {
                             int new_color = c_row[x];
                             uint32_t char_code = fv->glyph_codes[row[x]];
-                            if (x == cur->w - 1) char_code = '\n';
+                            if (x == f->w - 1) char_code = '\n';
                             if (new_color != cur_color && char_code != ' ')
                             {
                                 cur_color = new_color;
@@ -2272,11 +2159,11 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
             }
             else
             {
-                char *u8chr = fv->utf8buf;
-                for (y = 0; y < (int)cur->h; y++)
+                char* u8chr = fv->utf8buf;
+                for (y = 0; y < (int)f->h; y++)
                 {
-                    uint32_t *row = cur->row[y];
-                    for (x = 0; x < (int)cur->w; x++)
+                    uint32_t* row = f->row[y];
+                    for (x = 0; x < (int)f->w; x++)
                     {
                         u32toutf8(&u8chr, fv->glyph_codes[row[x]]);
                     }
@@ -2285,51 +2172,175 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
                 *u8chr = '\0';
                 fputs(fv->utf8buf, fv->graphics_out_fp);
             }
+        }
 
 #pragma omp section
-            while (fv->output_frame_images_prefix)
+        while (fv->output_frame_images_prefix)
+        {
+            char buf[4096];
+            FILE* fp = NULL;
+            void* bmp_buf = NULL;
+            size_t bmp_len = 0;
+
+            snprintf(buf, sizeof buf, "%s%08u.bmp", fv->output_frame_images_prefix, f->index);
+            fp = fopen(buf, "wb");
+            if (!fp)
             {
-                char buf[4096];
-                FILE *fp = NULL;
-                void *bmp_buf = NULL;
-                size_t bmp_len = 0;
+                fprintf(fv->log_fp, "Could not open '%s' for writting the current frame %u: %s.\n", buf, f->index, strerror(errno));
+                break;
+            }
 
-                snprintf(buf, sizeof buf, "%s%08u.bmp", fv->output_frame_images_prefix, cur->index);
-                fp = fopen(buf, "wb");
-                if (!fp)
+            if (create_rendered_image(fv, f, &bmp_buf, &bmp_len))
+            {
+                if (!fwrite(bmp_buf, bmp_len, 1, fp))
                 {
-                    fprintf(fv->log_fp, "Could not open '%s' for writting the current frame %u: %s.\n", buf, cur->index, strerror(errno));
-                    break;
+                    fprintf(fv->log_fp, "Could not write current frame %u to '%s': %s.\n", f->index, buf, strerror(errno));
                 }
+            }
 
-                if (create_rendered_image(fv, cur, &bmp_buf, &bmp_len))
+            free(bmp_buf);
+            fclose(fp);
+            break;
+        }
+    }
+}
+
+static int output_rendered_video(fontvideo_p fv, double timestamp)
+{
+    fontvideo_frame_p cur = NULL, next = NULL, prev = NULL;
+    int discard_threshold = 0;
+
+    if (!fv->frames) return 0;
+    if (!fv->rendered_frame_count) return 0;
+
+    if (atomic_exchange(&fv->doing_output, 1))
+    {
+        return 0;
+    }
+
+    lock_frame_linklist(fv);
+    cur = fv->frames;
+    if (!cur)
+    {
+        unlock_frame_linklist(fv);
+        goto FailExit;
+    }
+    // Do real-time play with frameskip check
+    if (fv->real_time_play && timestamp >= 0)
+    {
+        while(1)
+        {
+            next = cur->next;
+            if (!next) break;
+            if (timestamp >= cur->timestamp)
+            {
+                // Timestamp arrived
+                if (timestamp < next->timestamp) break;
+
+                // If output is too slow, skip frames.
+                // If the next frame also need to output right now, skip the current frame
+                if (!fv->no_frameskip)
                 {
-                    if (!fwrite(bmp_buf, bmp_len, 1, fp))
+                    discard_threshold++;
+                    if (discard_threshold >= discard_frame_num_threshold)
                     {
-                        fprintf(fv->log_fp, "Could not write current frame %u to '%s': %s.\n", cur->index, buf, strerror(errno));
+                        if (cur->rendered)
+                        {
+                            if (fv->verbose)
+                            {
+                                fprintf(fv->log_fp, "Discarding rendered frame %u due to lag. (%u)\n", cur->index, get_thread_id());
+                            }
+
+                            if (fv->frames == cur)
+                            {
+                                fv->frames = next;
+                            }
+                            else
+                            {
+                                if (!prev) prev = fv->frames;
+                                prev->next = next;
+                            }
+                            frame_delete(&cur);
+                            cur = next;
+                            atomic_fetch_sub(&fv->precached_frame_count, 1);
+                            atomic_fetch_sub(&fv->rendered_frame_count, 1);
+                        }
+                        else
+                        {
+                            atomic_int expected = 0;
+
+                            // Acquire it to prevent it from being rendered
+                            if (atomic_compare_exchange_strong(&cur->rendering, &expected, get_thread_id()))
+                            {
+                                fprintf(fv->log_fp, "Discarding frame %u to render due to lag. (%u)\n", cur->index, get_thread_id());
+
+                                if (fv->frames == cur)
+                                {
+                                    fv->frames = next;
+                                }
+                                else
+                                {
+                                    if (!prev) prev = fv->frames;
+                                    prev->next = next;
+                                }
+                                frame_delete(&cur);
+                                cur = next;
+                                atomic_fetch_sub(&fv->precached_frame_count, 1);
+                            }
+                            else
+                            {
+                                // It's acquired by a rendering thread, skip it.
+                                prev = cur;
+                                cur = next;
+                            }
+                        }
                     }
                 }
-
-                free(bmp_buf);
-                fclose(fp);
+                else
+                {
+                    break;
+                }
+            }
+            else
+            {
+                // Timestamp not arrived to this frame
                 break;
             }
         }
+    }
+    if (timestamp < 0 || timestamp >= cur->timestamp || !fv->real_time_play)
+    {
+        uint32_t x, y;
+        next = cur->next;
+        unlock_frame_linklist(fv);
+#if !defined(_DEBUG)
+        if (fv->real_time_play)
+        {
+            set_cursor_xy(0, 0);
+        }
+#endif
+        if (!cur->rendered)
+        {
+            unlock_frame_linklist(fv);
+            goto FailExit;
+        }
+
+        output_frame(fv, cur);
 
         fprintf(fv->graphics_out_fp, "%u\n", cur->index);
         if (!fv->real_time_play) fprintf(stderr, "%u\r", cur->index);
-        lock_frame(fv);
+        lock_frame_linklist(fv);
         fv->frames = next;
         if (!next)
         {
             fv->frame_last = NULL;
         }
         frame_delete(&cur);
-        fv->precached_frame_count--;
-        fv->rendered_frame_count--;
+        atomic_fetch_sub(&fv->precached_frame_count, 1);
+        atomic_fetch_sub(&fv->rendered_frame_count, 1);
         fv->last_output_time = timestamp;
     }
-    unlock_frame(fv);
+    unlock_frame_linklist(fv);
     atomic_exchange(&fv->doing_output, 0);
     return 1;
 FailExit:
@@ -2354,15 +2365,15 @@ static int decode_frames(fontvideo_p fv, int max_precache_frame_count)
         if (fv->real_time_play)
         {
             int should_break_loop = 0;
-            lock_frame(fv);
+            lock_frame_linklist(fv);
             if (fv->frame_last && fv->frame_last->timestamp > target_timestamp) should_break_loop = 1;
-            unlock_frame(fv);
+            unlock_frame_linklist(fv);
 #ifndef FONTVIDEO_NO_SOUND
             if (fv->do_audio_output)
             {
-                lock_audio(fv);
+                lock_audio_linklist(fv);
                 if (!fv->audio_last || fv->audio_last->timestamp <= target_timestamp) should_break_loop = 0;
-                unlock_audio(fv);
+                unlock_audio_linklist(fv);
             }
 #endif
             if (should_break_loop) break;

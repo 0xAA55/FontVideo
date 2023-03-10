@@ -154,26 +154,26 @@ typedef struct fontvideo_struct
     // Status: frames queue
     fontvideo_frame_p frames;
     fontvideo_frame_p frame_last;
-    atomic_int frame_lock;
+    atomic_int frame_linklist_lock;
 
 #ifndef FONTVIDEO_NO_SOUND
     // Status: audio queue
     fontvideo_audio_p audios;
     fontvideo_audio_p audio_last;
-    atomic_int audio_lock;
+    atomic_int audio_linklist_lock;
 #endif
 
     // Status: the current frame.
-    uint32_t frame_counter;
+    atomic_uint frame_counter;
 
     // Status: how many frames is extracted from the source media file and waiting for rendering
-    uint32_t precached_frame_count;
+    atomic_uint precached_frame_count;
 
     // Status: how many frames is rendering.
-    uint32_t rendering_frame_count;
+    atomic_uint rendering_frame_count;
 
     // Status: how many frames is rendered and waiting for show
-    uint32_t rendered_frame_count;
+    atomic_uint rendered_frame_count;
 
     // Status: avarage render time
     double avg_rendering_time_consuming;
