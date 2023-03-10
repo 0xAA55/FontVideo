@@ -485,6 +485,8 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
             // Insert into the link list
             replace->next = next;
             next = fv->audios;
+
+            if (fv->audio_last == next) fv->audio_last = replace;
             fv->audios = replace;
 
             // Delete the current piece
