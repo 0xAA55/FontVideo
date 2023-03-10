@@ -339,19 +339,21 @@ int avdec_seek(avdec_p av, double timestamp)
 
 int avdec_decode(avdec_p av, pfn_on_get_video on_get_video, pfn_on_get_audio on_get_audio)
 {
-    AVPacket packet;
+    AVPacket* packet;
     FILE *log_fp;
     int frame_received = 0;
     int rv;
 
     if (!av) return 0;
+    packet = av_packet_alloc();
+    if (!packet) return 0;
 
     log_fp = av->log_fp;
     while (!frame_received)
     {
         if (!av->is_last_frame)
         {
-            rv = av_read_frame(av->format_context, &packet);
+            rv = av_read_frame(av->format_context, packet);
             if (rv)
             {
                 av->is_last_frame = 1;
@@ -363,11 +365,11 @@ int avdec_decode(avdec_p av, pfn_on_get_video on_get_video, pfn_on_get_audio on_
         }
         if (!av->is_last_frame)
         {
-            if (packet.stream_index == av->video_index)
+            if (packet->stream_index == av->video_index)
             {
-                if (avcodec_send_packet(av->video_codec_context, &packet) != 0)
+                if (avcodec_send_packet(av->video_codec_context, packet) != 0)
                 {
-                    fprintf(log_fp, "avcodec_send_packet() failed on video stream %d.\n", packet.stream_index);
+                    fprintf(log_fp, "avcodec_send_packet() failed on video stream %d.\n", packet->stream_index);
                     goto FailExit;
                 }
                 
@@ -382,11 +384,11 @@ int avdec_decode(avdec_p av, pfn_on_get_video on_get_video, pfn_on_get_audio on_
                     else break;
                 }
             }
-            else if (packet.stream_index == av->audio_index)
+            else if (packet->stream_index == av->audio_index)
             {
-                if (avcodec_send_packet(av->audio_codec_context, &packet) != 0)
+                if (avcodec_send_packet(av->audio_codec_context, packet) != 0)
                 {
-                    fprintf(log_fp, "avcodec_send_packet() failed on audio stream %d.\n", packet.stream_index);
+                    fprintf(log_fp, "avcodec_send_packet() failed on audio stream %d.\n", packet->stream_index);
                     goto FailExit;
                 }
                 while (1)
@@ -407,7 +409,7 @@ int avdec_decode(avdec_p av, pfn_on_get_video on_get_video, pfn_on_get_audio on_
             {
                 if (avcodec_send_packet(av->video_codec_context, NULL) != 0)
                 {
-                    fprintf(log_fp, "avcodec_send_packet() failed on video stream %d.\n", packet.stream_index);
+                    fprintf(log_fp, "avcodec_send_packet() failed on video stream %d.\n", packet->stream_index);
                     goto FailExit;
                 }
                 while (1)
@@ -425,7 +427,7 @@ int avdec_decode(avdec_p av, pfn_on_get_video on_get_video, pfn_on_get_audio on_
             {
                 if (avcodec_send_packet(av->audio_codec_context, NULL) != 0)
                 {
-                    fprintf(log_fp, "avcodec_send_packet() failed on audio stream %d.\n", packet.stream_index);
+                    fprintf(log_fp, "avcodec_send_packet() failed on audio stream %d.\n", packet->stream_index);
                     goto FailExit;
                 }
                 while (1)
@@ -442,8 +444,10 @@ int avdec_decode(avdec_p av, pfn_on_get_video on_get_video, pfn_on_get_audio on_
             if (!frame_received) return 0;
         }
     }
+    av_packet_free(&packet);
     return 1;
 FailExit:
+    av_packet_free(&packet);
     return 0;
 }
 
