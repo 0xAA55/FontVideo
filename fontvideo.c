@@ -1266,7 +1266,7 @@ static uint32_t match_by_dotproduct(fontvideo_p fv, fontvideo_frame_p f, struct 
 
 static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
 {
-    uint32_t fy, fw, fh;
+    int fy, fw, fh;
     size_t num_glyph_codes = fv->num_glyph_codes;
     uint32_t glyph_pixel_count = fv->glyph_width * fv->glyph_height;
     int i;
@@ -1336,9 +1336,10 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
 
     if (fv->normalize_input) frame_normalize_input(f);
 
+#pragma omp parallel for
     for (fy = 0; fy < fh; fy++)
     {
-        uint32_t fx, sx, sy;
+        int fx, sx, sy;
         uint32_t *row = f->row[fy];
         uint8_t *c_row = f->c_row[fy];
         sy = fy * fv->glyph_height;
@@ -2308,7 +2309,6 @@ static int output_rendered_video(fontvideo_p fv, double timestamp)
     }
     if (timestamp < 0 || timestamp >= cur->timestamp || !fv->real_time_play)
     {
-        uint32_t x, y;
         next = cur->next;
         unlock_frame_linklist(fv);
 #if !defined(_DEBUG)
@@ -2376,10 +2376,7 @@ static int decode_frames(fontvideo_p fv, int max_precache_frame_count)
 #endif
             if (should_break_loop) break;
         }
-        else
-        {
-            if (fv->precached_frame_count >= (uint32_t)max_precache_frame_count) break;
-        }
+        if (fv->precached_frame_count >= (uint32_t)max_precache_frame_count) break;
 
         ret = 1;
         fv->tailed = !avdec_decode(fv->av, fv_on_get_video, fv->do_audio_output ? fv_on_get_audio : NULL);

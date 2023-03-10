@@ -60,7 +60,7 @@ int main(int argc, char **argv)
     int verbose = 0;
     int verbose_threading = 0;
     int mute = 0;
-    double prerender_secs = 3.0;
+    double prerender_secs = 0.5;
     double start_sec = -1.0;
     int output_width = 80;
     int output_height = 25;
