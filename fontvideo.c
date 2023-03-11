@@ -363,8 +363,11 @@ static void *move_ptr(void *ptr, ptrdiff_t step)
     return (uint8_t *)ptr + step;
 }
 
+static void fv_on_get_video(avdec_p av, void* bitmap, int width, int height, size_t pitch, double timestamp);
+static void fv_on_get_audio(avdec_p av, void** samples_of_channel, int channel_count, size_t num_samples_per_channel, double timestamp);
+
 // Create audio piece and copy the waveform
-static fontvideo_audio_p audio_create(void *samples, int channel_count, size_t num_samples_per_channel, double timestamp);
+static fontvideo_audio_p audio_create(int sample_rate, void *samples, int channel_count, size_t num_samples_per_channel, double timestamp);
 
 #ifndef FONTVIDEO_NO_SOUND
 // Callback function for siowrap output sound to libsoundio
@@ -404,139 +407,147 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
 
     // Because the next operations will change the audio link list, so lock it up.
     lock_audio_linklist(fv);
-    while (fv->audios)
+    while (total < samples_to_write_per_channel)
     {
-        // Next audio piece in the link list
-        fontvideo_audio_p next = fv->audios->next;
-
-        // Current time
-        double current_time = rttimer_gettime(&fv->tmr);
-
-        // Source pointer
-        float *sptr = fv->audios->buffer; // Mono
-        float *sptr_l = fv->audios->ptr_left; // Stereo left
-        float *sptr_r = fv->audios->ptr_right; // Stereo right
-
-        // Source step length, by **SAMPLES**
-        size_t sstep = 1; // Mono
-        size_t sstep_l = fv->audios->step_left; // Stereo left
-        size_t sstep_r = fv->audios->step_right; // Stereo right
-        ptrdiff_t writable = fv->audios->frames; // Source frames
-        size_t wrote = 0; // Total frames wrote
-
-        // Do audio piece skip
-        if (!fv->no_frameskip && next)
+        if (fv->audios)
         {
-            if (current_time > next->timestamp)
+            // Next audio piece in the link list
+            fontvideo_audio_p next = fv->audios->next;
+
+            // Current time
+            double current_time = rttimer_gettime(&fv->tmr);
+
+            // Source pointer
+            float* sptr = fv->audios->buffer; // Mono
+            float* sptr_l = fv->audios->ptr_left; // Stereo left
+            float* sptr_r = fv->audios->ptr_right; // Stereo right
+
+            // Source step length, by **SAMPLES**
+            size_t sstep = 1; // Mono
+            size_t sstep_l = fv->audios->step_left; // Stereo left
+            size_t sstep_r = fv->audios->step_right; // Stereo right
+            ptrdiff_t writable = fv->audios->frames; // Source frames
+            size_t wrote = 0; // Total frames wrote
+
+            // Do audio piece skip
+            if (!fv->no_frameskip && next)
             {
-                audio_delete(&fv->audios);
-                fv->audios = next;
-                continue;
+                if (current_time > next->timestamp)
+                {
+                    audio_delete(&fv->audios);
+                    fv->audios = next;
+                    continue;
+                }
             }
-        }
 
-        if ((size_t)writable > samples_to_write_per_channel - total) writable = (ptrdiff_t)(samples_to_write_per_channel - total);
-        if (!writable) break;
-        switch (channel_count)
-        {
-        case 1:
-            for (i = 0; i < writable; i++)
-            {
-                // Copy samples
-                dptr[0] = sptr[0];
-
-                // Move pointers
-                dptr = move_ptr(dptr, dstep);
-                sptr += sstep;
-            }
-            wrote = i;
-            total += wrote;
-            break;
-        case 2:
-            for (i = 0; i < writable; i++)
-            {
-                // Copy samples
-                dptr_l[0] = sptr_l[0];
-                dptr_r[0] = sptr_r[0];
-
-                // Move pointers
-                dptr_l = move_ptr(dptr_l, dstep_l);
-                dptr_r = move_ptr(dptr_r, dstep_r);
-                sptr_l += sstep_l;
-                sptr_r += sstep_r;
-            }
-            wrote = i;
-            total += wrote;
-            break;
-        }
-        if (wrote >= fv->audios->frames)
-        {
-            audio_delete(&fv->audios);
-            fv->audios = next;
-        }
-        else // If the current audio piece is not all written, reserve the rest of the frames for the next callback.
-        {
-            size_t rest = fv->audios->frames - wrote;
-            fontvideo_audio_p replace;
-
-            // Reserve the rest of the frames
-            replace = audio_create(&fv->audios->buffer[wrote * channel_count], channel_count, rest, fv->audios->timestamp);
-
-            // Insert into the link list
-            replace->next = next;
-            next = fv->audios;
-
-            if (fv->audio_last == next) fv->audio_last = replace;
-            fv->audios = replace;
-
-            // Delete the current piece
-            audio_delete(&next);
-
-            // Done writing audio
-            break;
-        }
-    }
-
-    // If all audio pieces is written, fill the rest of the buffer to silence
-    if (!fv->audios)
-    {
-        fv->audio_last = NULL;
-
-        // No need to keep the lock, release ASAP
-        unlock_audio_linklist(fv);
-
-        // Check if the buffer isn't all filled, then fill if not.
-        if (total < samples_to_write_per_channel)
-        {
-            ptrdiff_t writable = samples_to_write_per_channel - total;
+            if ((size_t)writable > samples_to_write_per_channel - total) writable = (ptrdiff_t)(samples_to_write_per_channel - total);
+            if (!writable) break;
             switch (channel_count)
             {
             case 1:
                 for (i = 0; i < writable; i++)
                 {
-                    dptr[0] = 0;
+                    // Copy samples
+                    dptr[0] = sptr[0];
+
+                    // Move pointers
                     dptr = move_ptr(dptr, dstep);
+                    sptr += sstep;
                 }
-                total += writable;
+                wrote = i;
+                total += wrote;
                 break;
             case 2:
                 for (i = 0; i < writable; i++)
                 {
-                    dptr_l[0] = 0;
-                    dptr_r[0] = 0;
+                    // Copy samples
+                    dptr_l[0] = sptr_l[0];
+                    dptr_r[0] = sptr_r[0];
+
+                    // Move pointers
                     dptr_l = move_ptr(dptr_l, dstep_l);
                     dptr_r = move_ptr(dptr_r, dstep_r);
+                    sptr_l += sstep_l;
+                    sptr_r += sstep_r;
                 }
-                total += writable;
+                wrote = i;
+                total += wrote;
+                break;
+            }
+            if (wrote >= fv->audios->frames)
+            {
+                audio_delete(&fv->audios);
+                fv->audios = next;
+            }
+            else // If the current audio piece is not all written, reserve the rest of the frames for the next callback.
+            {
+                size_t rest = fv->audios->frames - wrote;
+                fontvideo_audio_p replace;
+
+                // Reserve the rest of the frames
+                replace = audio_create(sample_rate, &fv->audios->buffer[wrote * channel_count], channel_count, rest, fv->audios->timestamp);
+
+                // Insert into the link list
+                replace->next = next;
+                next = fv->audios;
+
+                if (fv->audio_last == next) fv->audio_last = replace;
+                fv->audios = replace;
+
+                // Delete the current piece
+                audio_delete(&next);
+
+                // Done writing audio
+                unlock_audio_linklist(fv);
                 break;
             }
         }
+        else
+        {
+            fv->audio_last = NULL;
+
+            // No need to keep the lock, release ASAP
+            unlock_audio_linklist(fv);
+
+            // Check if the buffer isn't all filled, then fill if not.
+            if (total < samples_to_write_per_channel)
+            {
+                if (fv->tailed)
+                {
+                    ptrdiff_t writable = samples_to_write_per_channel - total;
+                    switch (channel_count)
+                    {
+                    case 1:
+                        for (i = 0; i < writable; i++)
+                        {
+                            dptr[0] = 0;
+                            dptr = move_ptr(dptr, dstep);
+                        }
+                        total += writable;
+                        break;
+                    case 2:
+                        for (i = 0; i < writable; i++)
+                        {
+                            dptr_l[0] = 0;
+                            dptr_r[0] = 0;
+                            dptr_l = move_ptr(dptr_l, dstep_l);
+                            dptr_r = move_ptr(dptr_r, dstep_r);
+                        }
+                        total += writable;
+                        break;
+                    }
+                }
+                else
+                {
+                    int bo = 0;
+                    while (atomic_exchange(&fv->doing_decoding, 1)) backoff(&bo);
+                    fv->tailed = !avdec_decode(fv->av, fv_on_get_video, fv_on_get_audio);
+                    atomic_store(&fv->doing_decoding, 0);
+                }
+            }
+        }
     }
-    else
-    {
-        // Make sure the link list is unlocked properly.
-        unlock_audio_linklist(fv);
-    }
+
     return total;
 }
 #endif
@@ -1659,7 +1670,7 @@ Unlock:
 
 #ifndef FONTVIDEO_NO_SOUND
 // Create the audio 
-static fontvideo_audio_p audio_create(void *samples, int channel_count, size_t num_samples_per_channel, double timestamp)
+static fontvideo_audio_p audio_create(int sample_rate, void *samples, int channel_count, size_t num_samples_per_channel, double timestamp)
 {
     fontvideo_audio_p a = NULL;
     ptrdiff_t i;
@@ -1675,6 +1686,7 @@ static fontvideo_audio_p audio_create(void *samples, int channel_count, size_t n
     if (!a) return a;
 
     a->timestamp = timestamp;
+    a->duration = (double)num_samples_per_channel / sample_rate;
     a->frames = num_samples_per_channel;
     // a->buffer = calloc(num_samples_per_channel * channel_count, sizeof a->buffer[0]);
     if (!a->buffer) goto FailExit;
@@ -1777,8 +1789,8 @@ static void fv_on_get_audio(avdec_p av, void **samples_of_channel, int channel_c
     fontvideo_audio_p a = NULL;
 
     if (!fv->do_audio_output) return;
-    
-    a = audio_create(samples_of_channel[0], channel_count, num_samples_per_channel, timestamp);
+
+    a = audio_create(av->decoded_af.sample_rate, samples_of_channel[0], channel_count, num_samples_per_channel, timestamp);
     if (!a)
     {
         return;
@@ -2366,24 +2378,26 @@ static int decode_frames(fontvideo_p fv, int max_precache_frame_count)
         {
             int should_break_loop = 0;
             lock_frame_linklist(fv);
-            if (fv->frame_last && fv->frame_last->timestamp > target_timestamp) should_break_loop = 1;
+            if (fv->frame_last && fv->frame_last->timestamp > target_timestamp)
+                should_break_loop = 1;
             unlock_frame_linklist(fv);
 #ifndef FONTVIDEO_NO_SOUND
             if (fv->do_audio_output)
             {
                 lock_audio_linklist(fv);
-                if (!fv->audio_last || fv->audio_last->timestamp <= target_timestamp) should_break_loop = 0;
+                if (!fv->audio_last || fv->audio_last->timestamp - fv->audio_last->duration - fv->precache_seconds <= target_timestamp) should_break_loop = 0;
                 unlock_audio_linklist(fv);
             }
 #endif
-            if (should_break_loop) break;
+            if (should_break_loop)
+                break;
         }
         if (fv->precached_frame_count >= (uint32_t)max_precache_frame_count) break;
 
         ret = 1;
         fv->tailed = !avdec_decode(fv->av, fv_on_get_video, fv->do_audio_output ? fv_on_get_audio : NULL);
     }
-    atomic_exchange(&fv->doing_decoding, 0);
+    atomic_store(&fv->doing_decoding, 0);
     if (fv->tailed && fv->verbose)
     {
         fprintf(fv->log_fp, "All frames decoded. (%u)\n", get_thread_id());

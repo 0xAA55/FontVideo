@@ -42,6 +42,7 @@ typedef struct fontvideo_audio_struct fontvideo_audio_t, *fontvideo_audio_p;
 struct fontvideo_audio_struct
 {
     double timestamp;
+    double duration;
     size_t frames;
     float *buffer;
     float *ptr_left;
