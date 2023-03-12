@@ -2448,6 +2448,10 @@ fontvideo_p fv_create
     fv->av = avdec_open(input_file, stderr);
     if (!fv->av) goto FailExit;
     fv->av->userdata = fv;
+    if (!fv->av->audio_codec_context)
+    {
+        do_audio_output = 0;
+    }
 
     fv->precache_seconds = precache_seconds;
 
