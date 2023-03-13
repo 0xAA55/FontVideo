@@ -1464,7 +1464,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                 int hcbw = palette_brightness_window / 2;
                 float sbr, ebr;
                 double rgb_normalize;
-                float best_score_conv;
+                float best_score;
 
                 // Get the average color of the char from the source frame
                 for (y = 0; y < (int)fv->glyph_height; y++)
@@ -1531,8 +1531,7 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                 if (ecp < 0) ecp = 0;
                 else if (ecp > 15) ecp = 15;
 
-                best_score_conv = -9999999.9f;
-                // best_score = 9999999.9f;
+                best_score = -9999999.9f;
                 col = 0;
                 for (i = scp; i <= ecp; i++)
                 {
@@ -1542,9 +1541,9 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                         avr_r * palette[j].rgb.r +
                         avr_g * palette[j].rgb.g +
                         avr_b * palette[j].rgb.b;
-                    if (score >= best_score_conv)
+                    if (score >= best_score)
                     {
-                        best_score_conv = score;
+                        best_score = score;
                         col = (uint8_t)j;
                     }
                 }
