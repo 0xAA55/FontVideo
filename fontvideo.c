@@ -2449,7 +2449,7 @@ fontvideo_p fv_create
     fv->av->userdata = fv;
     if (!fv->av->audio_codec_context)
     {
-        do_audio_output = 0;
+        fv->do_audio_output = 0;
     }
 
     fv->precache_seconds = precache_seconds;
@@ -2481,7 +2481,7 @@ fontvideo_p fv_create
     }
     if (!fv_set_output_resolution(fv, x_resolution, y_resolution)) goto FailExit;
 
-    if (do_audio_output)
+    if (fv->do_audio_output)
     {
         af.channel_layout = av_get_default_channel_layout(2);
         af.sample_rate = fv->av->decoded_af.sample_rate;
