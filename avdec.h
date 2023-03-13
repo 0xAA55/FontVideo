@@ -27,10 +27,21 @@ typedef struct avdec_audio_format_struct
     int64_t bit_rate;
 }avdec_audio_format_t, *avdec_audio_format_p;
 
+typedef enum avdec_target_enum
+{
+    avt_for_none = 0,
+    avt_for_video = 1,
+    avt_for_audio = 2,
+    avt_for_both = avt_for_video | avt_for_audio
+}avdec_target_t, * avdec_target_p;
+
 typedef struct avdec_struct
 {
-    // the opened multimedia file context
-    AVFormatContext *format_context;
+    // the opened multimedia file context dedicated for video
+    AVFormatContext* format_context_video;
+    
+    // the opened multimedia file context dedicated for audio
+    AVFormatContext* format_context_audio;
     
     // streams of the file
     AVStream *video_stream;
@@ -45,9 +56,6 @@ typedef struct avdec_struct
     // frame read from raw
     AVFrame *frame;
 
-    // the status of reading frames
-    int is_last_frame;
-
     // Current timestamp
     double video_timestamp;
     double audio_timestamp;
@@ -59,6 +67,10 @@ typedef struct avdec_struct
     // if the decoded plain data should be converted, there's the converters
     struct SwsContext *video_conv;
     struct SwrContext *audio_conv;
+
+    // if is finished decoding
+    int video_eof;
+    int audio_eof;
 
     // converted data from video converter
     AVFrame *video_conv_frame;
@@ -86,7 +98,7 @@ void avdec_get_audio_format(avdec_p av, avdec_audio_format_p af);
 int avdec_set_decoded_video_format(avdec_p av, avdec_video_format_p vf); // Conversion will be performed if the format doesn't match the original decoded format.
 int avdec_set_decoded_audio_format(avdec_p av, avdec_audio_format_p af);
 int avdec_seek(avdec_p av, double timestamp);
-int avdec_decode(avdec_p av, pfn_on_get_video on_get_video, pfn_on_get_audio on_get_audio);
+int avdec_decode(avdec_p av, pfn_on_get_video on_get_video, pfn_on_get_audio on_get_audio, avdec_target_t target);
 void avdec_close(avdec_p *pav);
 
 

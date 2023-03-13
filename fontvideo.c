@@ -541,7 +541,7 @@ static size_t fv_on_write_sample(siowrap_p s, int sample_rate, int channel_count
                 {
                     int bo = 0;
                     while (atomic_exchange(&fv->doing_decoding, 1)) backoff(&bo);
-                    fv->tailed = !avdec_decode(fv->av, fv_on_get_video, fv_on_get_audio);
+                    fv->tailed = !avdec_decode(fv->av, fv_on_get_video, fv_on_get_audio, avt_for_audio);
                     atomic_store(&fv->doing_decoding, 0);
                 }
             }
@@ -2394,7 +2394,7 @@ static int decode_frames(fontvideo_p fv, int max_precache_frame_count)
         if (fv->precached_frame_count >= (uint32_t)max_precache_frame_count) break;
 
         ret = 1;
-        fv->tailed = !avdec_decode(fv->av, fv_on_get_video, fv->do_audio_output ? fv_on_get_audio : NULL);
+        fv->tailed = !avdec_decode(fv->av, fv_on_get_video, fv->do_audio_output ? fv_on_get_audio : NULL, avt_for_both);
     }
     atomic_store(&fv->doing_decoding, 0);
     if (fv->tailed && fv->verbose)
