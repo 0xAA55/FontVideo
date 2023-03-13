@@ -42,7 +42,7 @@ if __name__ == '__main__':
 	else:
 		fexec = 'fontvideo'
 
-	tfile = os.path.join('temp', f'{iname}_t.m4a')
+	tfile = os.path.join('temp', f'{iname}_t.m4v')
 	afile = os.path.join('temp', f'{iname}_a.m4a')
 	if os.path.exists(tfile): os.remove(tfile)
 	if os.path.exists(afile): os.remove(afile)
