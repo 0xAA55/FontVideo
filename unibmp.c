@@ -5,6 +5,8 @@
 #include<string.h>
 #include<errno.h>
 
+#include"bunchalloc.h"
+
 #pragma pack(push, 1)
 
 typedef struct BitmapFileHeader_struct
@@ -106,21 +108,22 @@ UniformBitmap_p UB_CreateNew(uint32_t Width, uint32_t Height)
 {
 	UniformBitmap_p UB = NULL;
 
-	UB = calloc(1, sizeof * UB);
+	// UB = calloc(1, sizeof * UB);
+	UB = bunchalloc(16, sizeof UB[0],
+		offsetof(UniformBitmap_t, RowPointers), (size_t)Height * sizeof UB->RowPointers[0],
+		offsetof(UniformBitmap_t, BitmapData), (size_t)Width * Height * sizeof UB->BitmapData[0],
+		0, 0);
 	if (!UB) return NULL;
 
 	UB->Width = Width;
 	UB->Height = Height;
 
-	UB->BitmapData = calloc((size_t)Width * Height, sizeof UB->BitmapData[0]);
-	UB->RowPointers = malloc(Height * sizeof UB->RowPointers[0]);
-	if (!UB->BitmapData || !UB->RowPointers) goto FailExit;
+	// UB->BitmapData = calloc((size_t)Width * Height, sizeof UB->BitmapData[0]);
+	// UB->RowPointers = malloc(Height * sizeof UB->RowPointers[0]);
+	// if (!UB->BitmapData || !UB->RowPointers) goto FailExit;
 
 	UB_SetupRowPointers(UB, 0);
 	return UB;
-FailExit:
-	UB_Free(&UB);
-	return NULL;
 }
 
 // Create UniformBitmap from a `bmp` file.
@@ -143,6 +146,8 @@ UniformBitmap_p UB_CreateFromFile(const char *FilePath, FILE *log_fp)
 	uint32_t Bitfield_A = 0; // The bitfield for the alpha channel. Normally, there are no alpha channel bitfields.
 	uint8_t *ReadInLineBuffer = NULL;
 	size_t i;
+	uint32_t Width;
+	uint32_t Height;
 
 	// Open file for read
 	FILE *fp = fopen(FilePath, "rb");
@@ -248,31 +253,38 @@ UniformBitmap_p UB_CreateFromFile(const char *FilePath, FILE *log_fp)
 	// Seek to the bitmap data
 	fseek(fp, BMFH.bfOffbits, SEEK_SET);
 
-	UB = malloc(sizeof UB[0]);
+	Width = BMIF.biWidth;
+	Height = BMIF.biHeight < 0 ? -BMIF.biHeight : BMIF.biHeight;
+
+	// UB = malloc(sizeof UB[0]);
+	UB = bunchalloc(16, sizeof UB[0],
+		offsetof(UniformBitmap_t, RowPointers), (size_t)Height * sizeof UB->RowPointers[0],
+		offsetof(UniformBitmap_t, BitmapData), (size_t)Width * Height * sizeof UB->BitmapData[0],
+		0, 0);
 	if (!UB)
 	{
 		perror("Allocate memory for UniformBitmap");
 		goto FailExit;
 	}
 
-	UB->Width = BMIF.biWidth;
-	UB->Height = BMIF.biHeight < 0 ? -BMIF.biHeight : BMIF.biHeight;
+	UB->Width = Width;
+	UB->Height = Height;
 
 	UB->XPelsPerMeter = BMIF.biXPelsPerMeter;
 	UB->YPelsPerMeter = BMIF.biYPelsPerMeter;
 
-	UB->BitmapData = malloc((size_t)UB->Width * UB->Height * sizeof UB->BitmapData[0]);
-	if (!UB->BitmapData)
-	{
-		perror("Allocate memory for bitmap");
-		goto FailExit;
-	}
-	UB->RowPointers = malloc(UB->Height * sizeof UB->RowPointers[0]);
-	if (!UB->RowPointers)
-	{
-		perror("Allocate memory for bitmap row pointers");
-		goto FailExit;
-	}
+	// UB->BitmapData = malloc((size_t)UB->Width * UB->Height * sizeof UB->BitmapData[0]);
+	// if (!UB->BitmapData)
+	// {
+	// 	perror("Allocate memory for bitmap");
+	// 	goto FailExit;
+	// }
+	// UB->RowPointers = malloc(UB->Height * sizeof UB->RowPointers[0]);
+	// if (!UB->RowPointers)
+	// {
+	// 	perror("Allocate memory for bitmap row pointers");
+	// 	goto FailExit;
+	// }
 	// Check the row order of the bitmap file, unify it to top-bottom
 	if (BMIF.biHeight < 0)
 	{
@@ -647,31 +659,31 @@ UniformBitmap_p UB_CreateFromCopy(UniformBitmap_p Source)
 {
 	UniformBitmap_p NewUB;
 	size_t BitmapSize;
+	uint32_t Width, Height;
 
 	if (!Source) return NULL;
 
-	NewUB = malloc(sizeof * NewUB);
-	if (!NewUB) return NewUB;
-	memset(NewUB, 0, sizeof * NewUB);
+	Width = Source->Width;
+	Height = Source->Height;
+	BitmapSize = (size_t)Width * Height * sizeof Source->BitmapData[0];
 
-	BitmapSize = (size_t)Source->Width * Source->Height * sizeof Source->BitmapData[0];
+	NewUB = bunchalloc(16, sizeof NewUB[0],
+		offsetof(UniformBitmap_t, RowPointers), (size_t)Height * sizeof NewUB->RowPointers[0],
+		offsetof(UniformBitmap_t, BitmapData), BitmapSize,
+		0, 0);
+	if (!NewUB) return NULL;
+
 
 	NewUB->Width = Source->Width;
 	NewUB->Height = Source->Height;
 	NewUB->XPelsPerMeter = Source->XPelsPerMeter;
 	NewUB->YPelsPerMeter = Source->YPelsPerMeter;
-	NewUB->BitmapData = malloc(BitmapSize);
-	NewUB->RowPointers = malloc(NewUB->Height * sizeof NewUB->RowPointers[0]);
-	if (!NewUB->BitmapData || !NewUB->RowPointers) goto FailExit;
 
 	memcpy(NewUB->BitmapData, Source->BitmapData, BitmapSize);
 
 	UB_SetupRowPointers(NewUB, 0);
 
 	return NewUB;
-FailExit:
-	UB_Free(&NewUB);
-	return NULL;
 }
 
 // 释放位图资源
@@ -682,8 +694,6 @@ void UB_Free(UniformBitmap_p *pUB)
 		UniformBitmap_p UB = *pUB;
 		*pUB = NULL;
 
-		free(UB->RowPointers);
-		free(UB->BitmapData);
-		free(UB);
+		bunchfree(UB);
 	}
 }
