@@ -67,9 +67,9 @@ if __name__ == '__main__':
 
 	jargs = ['ffmpeg',
 		'-framerate', '30',
-		'-i', os.path.join('temp', 'f_%08d.bmp'),
-		'-i', afile,
-		'-c:v', 'libx264',
+		'-i', os.path.join('temp', 'f_%08d.bmp')]
+	if os.path.exists(afile): jargs += ['-i', afile]
+	jargs += ['-c:v', 'libx264',
 		'-filter:v', 'fps=30',
 		'-c:a', 'copy',
 		'-shortest',
