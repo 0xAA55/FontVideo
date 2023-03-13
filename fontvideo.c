@@ -354,7 +354,7 @@ static void audio_delete(fontvideo_audio_p* pa)
     *pa = NULL;
 
     // free(a->buffer);
-    free(a);
+    bunchfree(a);
 }
 
 // Move a pointer by bytes
@@ -960,7 +960,7 @@ static void frame_delete(fontvideo_frame_p* pf)
     // free(f->c_row);
     free(f->glyph_usage_bitmap);
 
-    free(f);
+    bunchfree(f);
 }
 
 // Create a frame, create buffers, copy the source bitmap, preparing for the rendering
