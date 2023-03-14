@@ -25,9 +25,10 @@ if __name__ == '__main__':
 			iname = ifile
 			iext = 'mp4'
 		ofile = f'{iname}_o.mp4'
-		if os.path.exists(ofile): ofile = 'output.mp4'
 		oname = ofile.rsplit('.', 1)[0]
 	print(f'Output file is `{ofile}`')
+	if os.path.exists(ofile): os.remove(ofile)
+	print('Deleted the existing file.')
 
 	if not os.path.exists('temp'):
 		print('Make subdirectory `temp`')
