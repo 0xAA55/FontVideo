@@ -1013,7 +1013,7 @@ static fontvideo_frame_p frame_create(fontvideo_p fv, double timestamp, void *bi
     // f->mono_data = calloc(bmp_height, bmp_width * sizeof f->mono_data[0]); if (!f->mono_data) goto FailExit;
     // f->mono_data_row = calloc(bmp_height, sizeof f->mono_data_row[0]); if (!f->mono_data_row) goto FailExit;
 
-    if (!fv->no_avoid_repetition)
+    if (!fv->avoid_repetition)
     {
         f->glyph_usage_bitmap = create_glyph_usage_bitmap(fv->num_glyph_codes);
     }
