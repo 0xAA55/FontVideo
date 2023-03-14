@@ -24,7 +24,7 @@ if __name__ == '__main__':
 		except ValueError:
 			iname = ifile
 			iext = 'mp4'
-		ofile = f'{iname}_o.{iext}'
+		ofile = f'{iname}_o.mp4'
 		if os.path.exists(ofile): ofile = 'output.mp4'
 		oname = ofile.rsplit('.', 1)[0]
 	print(f'Output file is `{ofile}`')
@@ -80,8 +80,8 @@ if __name__ == '__main__':
 			os.remove(df)
 		except Exception as e:
 			print(f'Failed to delete `{df}`: {str(e)}')
-	os.remove(tfile)
-	os.remove(afile)
+	if os.path.exists(tfile): os.remove(tfile)
+	if os.path.exists(afile): os.remove(afile)
 	os.rmdir('temp')
 
 
