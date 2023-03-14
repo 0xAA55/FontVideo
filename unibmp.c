@@ -7,42 +7,6 @@
 
 #include"bunchalloc.h"
 
-#pragma pack(push, 1)
-
-typedef struct BitmapFileHeader_struct
-{
-	uint16_t bfType;
-	uint32_t bfSize;
-	uint16_t bfReserved1;
-	uint16_t bfReserved2;
-	uint32_t bfOffbits;
-}BitmapFileHeader_t, *BitmapFileHeader_p;
-
-typedef struct BitmapInfoHeader_struct
-{
-	uint32_t biSize;
-	int32_t biWidth;
-	int32_t biHeight;
-	uint16_t biPlanes;
-	uint16_t biBitCount;
-	uint32_t biCompression;
-	uint32_t biSizeImage;
-	uint32_t biXPelsPerMeter;
-	uint32_t biYPelsPerMeter;
-	uint32_t biClrUsed;
-	uint32_t biClrImportant;
-}BitmapInfoHeader_t, *BitmapInfoHeader_p;
-
-#pragma pack(pop)
-
-enum BitmapCompression
-{
-	BI_RGB = 0,
-	BI_RLE8 = 1,
-	BI_RLE4 = 2,
-	BI_Bitfields = 3
-};
-
 static uint32_t GetBitfieldShift(uint32_t Bitfield)
 {
 	uint32_t Shift = 0;
