@@ -1840,8 +1840,7 @@ static void ensure_avi_writer(fontvideo_p fv)
         wf.BitsPerSample = 32;
         wf.AvgBytesPerSec = wf.SamplesPerSec * wf.BlockAlign;
 
-        avdec_get_video_format(fv->av, &vf);
-        fv->avi_writer = AVIWriterStart(fv->output_avi_file, vf.framerate, &BMIF, Palette, NULL, &wf);
+        fv->avi_writer = AVIWriterStart(fv->output_avi_file, fv->av->decoded_vf.framerate, &BMIF, Palette, NULL, &wf);
     }
 }
 
@@ -2551,7 +2550,7 @@ static void output_frame(fontvideo_p fv, fontvideo_frame_p f)
                         {
                         case 8: create_8bit_image(fv, f, &bmp_buf, &bmp_len, &bmp_body_offset); break;
                         case 24: create_24bit_image(fv, f, &bmp_buf, &bmp_len, &bmp_body_offset); break;
-                        default:  assert(0);
+                        default: assert(0);
                         }
                     }
                     if (bmp_buf)
@@ -2744,7 +2743,7 @@ static int decode_frames(fontvideo_p fv, int max_precache_frame_count)
         if (fv->precached_frame_count >= (uint32_t)max_precache_frame_count) break;
 
         ret = 1;
-        fv->tailed = !avdec_decode(fv->av, fv_on_get_video, fv->do_audio_output ? fv_on_get_audio : NULL, avt_for_both);
+        fv->tailed = !avdec_decode(fv->av, fv_on_get_video, fv_on_get_audio, avt_for_both);
     }
     atomic_store(&fv->doing_decoding, 0);
     if (fv->tailed && fv->verbose)
@@ -2813,10 +2812,11 @@ fontvideo_p fv_create
     if (!y_resolution) y_resolution = 24;
     if (!x_resolution || !no_auto_aspect_adjust)
     {
-        avdec_video_format_t vf;
         uint32_t desired_x;
-        avdec_get_video_format(fv->av, &vf);
-        desired_x = y_resolution * 2 * vf.width / vf.height;
+        int src_w, src_h;
+        src_w = fv->av->decoded_vf.width;
+        src_h = fv->av->decoded_vf.height;
+        desired_x = y_resolution * 2 * src_w / src_h;
         desired_x += desired_x & 1;
         if (!desired_x) desired_x = 2;
         if (!x_resolution || desired_x < x_resolution) x_resolution = desired_x;
@@ -2824,7 +2824,7 @@ fontvideo_p fv_create
         {
             uint32_t desired_y;
             desired_x = x_resolution;
-            desired_y = (x_resolution * vf.height / vf.width) / 2;
+            desired_y = (x_resolution * src_h / src_w) / 2;
             if (!desired_y) desired_y = 1;
             y_resolution = desired_y;
         }
