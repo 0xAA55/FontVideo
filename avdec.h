@@ -15,13 +15,14 @@ typedef struct avdec_video_format_struct
 {
     int width;
     int height;
+    double framerate;
     enum AVPixelFormat pixel_format;
 }avdec_video_format_t, *avdec_video_format_p;
 
 // Audio format descriptor for audio waveform
 typedef struct avdec_audio_format_struct
 {
-    uint64_t channel_layout;
+    int num_channels;
     int sample_rate;
     enum AVSampleFormat sample_fmt;
     int64_t bit_rate;
@@ -53,9 +54,6 @@ typedef struct avdec_struct
     AVCodecContext *video_codec_context;
     AVCodecContext *audio_codec_context;
 
-    // frame read from raw
-    AVFrame *frame;
-
     // Current timestamp
     double video_timestamp;
     double audio_timestamp;
@@ -72,6 +70,9 @@ typedef struct avdec_struct
     int video_eof;
     int audio_eof;
 
+    // frame read from raw
+    AVFrame* frame;
+
     // converted data from video converter
     AVFrame *video_conv_frame;
 
@@ -80,7 +81,7 @@ typedef struct avdec_struct
     int audio_conv_data_linesize;
     size_t audio_conv_samples;
     avdec_audio_format_t audio_conv_format;
-    int audio_conv_channels;
+    int audio_conv_num_channels;
 
     // put whatever data you want
     void *userdata;

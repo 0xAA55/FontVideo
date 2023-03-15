@@ -12,12 +12,13 @@ static void get_video_format(AVCodecContext *ctx, avdec_video_format_p vf)
 {
     vf->width = ctx->width;
     vf->height = ctx->height;
+    vf->framerate = av_q2d(ctx->framerate);
     vf->pixel_format = ctx->pix_fmt;
 }
 
 static void get_audio_format(AVCodecContext *ctx, avdec_audio_format_p af)
 {
-    af->channel_layout = ctx->channel_layout;
+    af->num_channels = ctx->ch_layout.nb_channels;
     af->sample_rate = ctx->sample_rate;
     af->sample_fmt = ctx->sample_fmt;
     af->bit_rate = ctx->bit_rate;
@@ -225,6 +226,8 @@ FailExit:
 
 int avdec_set_decoded_audio_format(avdec_p av, avdec_audio_format_p af)
 {
+    AVChannelLayout chl = { 0 };
+
     if (!av || !af || !av->audio_codec_context) return 0;
 
     swr_free(&av->audio_conv);
@@ -240,18 +243,21 @@ int avdec_set_decoded_audio_format(avdec_p av, avdec_audio_format_p af)
     av->audio_conv = swr_alloc();
     if (!av->audio_conv) goto FailExit;
 
-    av_opt_set_int(av->audio_conv, "in_channel_layout", av->decoded_af.channel_layout, 0);
+    chl = av->audio_codec_context->ch_layout;
+
+    av_opt_set_chlayout(av->audio_conv, "in_chlayout", &chl, 0);
     av_opt_set_int(av->audio_conv, "in_sample_rate", av->decoded_af.sample_rate, 0);
     av_opt_set_sample_fmt(av->audio_conv, "in_sample_fmt", av->decoded_af.sample_fmt, 0);
 
-    av_opt_set_int(av->audio_conv, "out_channel_layout", af->channel_layout, 0);
+    chl.nb_channels = af->num_channels;
+    av_opt_set_chlayout(av->audio_conv, "out_chlayout", &chl, 0);
     av_opt_set_int(av->audio_conv, "out_sample_rate", af->sample_rate, 0);
     av_opt_set_sample_fmt(av->audio_conv, "out_sample_fmt", af->sample_fmt, 0);
 
     if (swr_init(av->audio_conv) < 0) goto FailExit;
 
     av->audio_conv_format = *af;
-    av->audio_conv_channels = av_get_channel_layout_nb_channels(af->channel_layout);
+    av->audio_conv_num_channels = af->num_channels;
 
     return 1;
 FailExit:
@@ -305,13 +311,13 @@ static void on_audio_decoded(avdec_p av, pfn_on_get_audio on_get_audio)
         if (!av->audio_conv_data)
         {
             if (av_samples_alloc_array_and_samples((uint8_t ***)&av->audio_conv_data, &av->audio_conv_data_linesize,
-                av->audio_conv_channels, (int)dst_samples, av->audio_conv_format.sample_fmt, 0) < 0) goto FailExit;
+                av->audio_conv_num_channels, (int)dst_samples, av->audio_conv_format.sample_fmt, 0) < 0) goto FailExit;
             av->audio_conv_samples = dst_samples;
         }
         if( dst_samples > av->audio_conv_samples)
         {
             av_free(av->audio_conv_data[0]); av->audio_conv_data[0] = NULL;
-            if (av_samples_alloc((uint8_t **)av->audio_conv_data, &av->audio_conv_data_linesize, av->audio_conv_channels,
+            if (av_samples_alloc((uint8_t **)av->audio_conv_data, &av->audio_conv_data_linesize, av->audio_conv_num_channels,
                 (int)dst_samples, av->audio_conv_format.sample_fmt, 1) < 0) goto FailExit;
             av->audio_conv_samples = dst_samples;
         }
@@ -319,7 +325,7 @@ static void on_audio_decoded(avdec_p av, pfn_on_get_audio on_get_audio)
         {
             goto FailExit;
         }
-        on_get_audio(av, av->audio_conv_data, av->audio_conv_channels, dst_samples, time_position);
+        on_get_audio(av, av->audio_conv_data, av->audio_conv_num_channels, dst_samples, time_position);
     }
     else
     {
@@ -547,7 +553,6 @@ void avdec_close(avdec_p *pav)
         av_freep(av->audio_conv_data);
         av->audio_conv_data = NULL;
     }
-
     av_frame_free(&av->frame);
     avcodec_free_context(&av->video_codec_context);
     avcodec_free_context(&av->audio_codec_context);
