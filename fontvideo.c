@@ -12,6 +12,8 @@
 #include<omp.h>
 #include<threads.h>
 
+#include<math.h>
+
 #include"utf.h"
 
 #ifdef _DEBUG
@@ -1786,7 +1788,6 @@ static void ensure_avi_writer(fontvideo_p fv)
     if (!fv->avi_writer)
     {
         int i;
-        avdec_video_format_t vf;
         WaveFormatEx_t wf = { 0 };
         BitmapInfoHeader_t BMIF = { 0 };
         uint32_t Palette[16] = { 0 };
@@ -1834,14 +1835,38 @@ static void ensure_avi_writer(fontvideo_p fv)
         }
 
         wf.FormatTag = 3;
-        wf.Channels = fv->av->decoded_af.num_channels;
+        wf.Channels = (uint16_t)fv->av->decoded_af.num_channels;
         wf.SamplesPerSec = fv->av->decoded_af.sample_rate;
         wf.BlockAlign = wf.Channels * sizeof(float);
         wf.BitsPerSample = 32;
         wf.AvgBytesPerSec = wf.SamplesPerSec * wf.BlockAlign;
 
-        fv->avi_writer = AVIWriterStart(fv->output_avi_file, fv->av->decoded_vf.framerate, &BMIF, Palette, NULL, &wf);
+        fv->avi_writer = AVIWriterStart(fv->output_avi_file, (uint32_t)fv->av->decoded_vf.framerate, &BMIF, Palette, NULL, &wf);
     }
+}
+
+static int check_nan_inf(float *audio, int channel_count, size_t num_samples_per_channel)
+{
+    size_t i, num;
+    int ret = 0;
+    float prevs[2] = { 0 };
+    num = num_samples_per_channel * channel_count;
+    for (i = 0; i < num; i++)
+    {
+        int ch = i % channel_count;
+        switch (fpclassify(audio[i]))
+        {
+        case FP_NAN:
+        case FP_INFINITE:
+            audio[i] = prevs[ch];
+            ret = 1;
+            break;
+        default:
+            break;
+        }
+        prevs[ch] = audio[i]; 
+    }
+    return ret;
 }
 
 static void fv_on_get_audio(avdec_p av, void **samples_of_channel, int channel_count, size_t num_samples_per_channel, double timestamp)
@@ -1853,7 +1878,8 @@ static void fv_on_get_audio(avdec_p av, void **samples_of_channel, int channel_c
     if (fv->output_avi_file) ensure_avi_writer(fv);
     if (fv->avi_writer)
     {
-        AVIWriterWriteAudio(fv->avi_writer, samples_of_channel[0], num_samples_per_channel * channel_count * sizeof(float));
+        // check_nan_inf(samples_of_channel[0], channel_count, num_samples_per_channel);
+        AVIWriterWriteAudio(fv->avi_writer, samples_of_channel[0], (uint32_t)(num_samples_per_channel * channel_count * sizeof(float)));
     }
 
     if (!fv->do_audio_output) return;
@@ -2544,6 +2570,7 @@ static void output_frame(fontvideo_p fv, fontvideo_frame_p f)
                 ensure_avi_writer(fv);
                 if (fv->avi_writer)
                 {
+                    bmp_body_offset = 0;
                     if (!bmp_buf)
                     {
                         switch (fv->avi_writer->VideoFormat.biBitCount)
@@ -2773,7 +2800,6 @@ fontvideo_p fv_create
 )
 {
     fontvideo_p fv = NULL;
-    avdec_audio_format_t af = {0};
 
     fv = calloc(1, sizeof fv[0]);
     if (!fv) return fv;
@@ -2831,12 +2857,13 @@ fontvideo_p fv_create
     }
     if (!fv_set_output_resolution(fv, x_resolution, y_resolution)) goto FailExit;
 
-    if (fv->do_audio_output)
+    if (fv->do_audio_output || fv->output_avi_file)
     {
+        avdec_audio_format_t af = { 0 };
         af.num_channels = fv->av->decoded_af.num_channels;
         af.sample_rate = fv->av->decoded_af.sample_rate;
         af.sample_fmt = AV_SAMPLE_FMT_FLT;
-        af.bit_rate = (int64_t)af.sample_rate * 2 * sizeof(float);
+        af.bit_rate = (int64_t)af.sample_rate * af.num_channels * 32;
         avdec_set_decoded_audio_format(fv->av, &af);
     }
 
