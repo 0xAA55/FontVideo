@@ -1878,7 +1878,7 @@ static void fv_on_get_audio(avdec_p av, void **samples_of_channel, int channel_c
     if (fv->output_avi_file) ensure_avi_writer(fv);
     if (fv->avi_writer)
     {
-        // check_nan_inf(samples_of_channel[0], channel_count, num_samples_per_channel);
+        check_nan_inf(samples_of_channel[0], channel_count, num_samples_per_channel);
         AVIWriterWriteAudio(fv->avi_writer, samples_of_channel[0], (uint32_t)(num_samples_per_channel * channel_count * sizeof(float)));
     }
 
@@ -2800,6 +2800,7 @@ fontvideo_p fv_create
 )
 {
     fontvideo_p fv = NULL;
+    avdec_audio_format_t af = { 0 };
 
     fv = calloc(1, sizeof fv[0]);
     if (!fv) return fv;
@@ -2857,15 +2858,11 @@ fontvideo_p fv_create
     }
     if (!fv_set_output_resolution(fv, x_resolution, y_resolution)) goto FailExit;
 
-    if (fv->do_audio_output || fv->output_avi_file)
-    {
-        avdec_audio_format_t af = { 0 };
-        af.num_channels = fv->av->decoded_af.num_channels;
-        af.sample_rate = fv->av->decoded_af.sample_rate;
-        af.sample_fmt = AV_SAMPLE_FMT_FLT;
-        af.bit_rate = (int64_t)af.sample_rate * af.num_channels * 32;
-        avdec_set_decoded_audio_format(fv->av, &af);
-    }
+    af.num_channels = fv->av->decoded_af.num_channels;
+    af.sample_rate = fv->av->decoded_af.sample_rate;
+    af.sample_fmt = AV_SAMPLE_FMT_FLT;
+    af.bit_rate = (int64_t)af.sample_rate * af.num_channels * 32;
+    avdec_set_decoded_audio_format(fv->av, &af);
 
     if (start_timestamp < 0) start_timestamp = 0;
     else avdec_seek(fv->av, start_timestamp);
