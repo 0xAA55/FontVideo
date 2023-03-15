@@ -1880,7 +1880,7 @@ static int get_frame_and_render(fontvideo_p fv)
     return f ? 1 : 0;
 }
 
-static int create_rendered_image(fontvideo_p fv, fontvideo_frame_p rendered_frame, void ** out_file_content_buffer, size_t *out_file_content_size)
+static int create_rendered_image(fontvideo_p fv, fontvideo_frame_p rendered_frame, void ** out_file_content_buffer, size_t *out_file_content_size, size_t *out_offset_of_file_body)
 {
     void *buffer = NULL;
     size_t i;
@@ -1895,85 +1895,171 @@ static int create_rendered_image(fontvideo_p fv, fontvideo_frame_p rendered_fram
 
     if (fv->font_is_blackwhite)
     {
-#pragma pack(push, 1)
-        struct Bmp4BitPerPixelHeader
+        if (!fv->do_colored_output)
         {
-            uint16_t    bfType;
-            uint32_t    bfSize;
-            uint16_t    bfReserved1;
-            uint16_t    bfReserved2;
-            uint32_t    bfOffBits;
-            uint32_t    biSize;
-            int32_t     biWidth;
-            int32_t     biHeight;
-            uint16_t    biPlanes;
-            uint16_t    biBitCount;
-            uint32_t    biCompression;
-            uint32_t    biSizeImage;
-            int32_t     biXPelsPerMeter;
-            int32_t     biYPelsPerMeter;
-            uint32_t    biClrUsed;
-            uint32_t    biClrImportant;
-            uint32_t    Palette[16];
-        } *header;
+#pragma pack(push, 1)
+            struct Bmp1BitPerPixelHeader
+            {
+                uint16_t    bfType;
+                uint32_t    bfSize;
+                uint16_t    bfReserved1;
+                uint16_t    bfReserved2;
+                uint32_t    bfOffBits;
+                uint32_t    biSize;
+                int32_t     biWidth;
+                int32_t     biHeight;
+                uint16_t    biPlanes;
+                uint16_t    biBitCount;
+                uint32_t    biCompression;
+                uint32_t    biSizeImage;
+                int32_t     biXPelsPerMeter;
+                int32_t     biYPelsPerMeter;
+                uint32_t    biClrUsed;
+                uint32_t    biClrImportant;
+                uint32_t    Palette[2];
+            } *header;
 #pragma pack(pop)
 
-        pitch = (((size_t)bw * 4 - 1) / 32 + 1) * 4;
-        buf_size = sizeof header[0] + pitch * bh;
-        buffer = malloc(buf_size);
-        if (!buffer)
-        {
-            fprintf(fv->log_fp, "Could not allocate memory (%zu bytes) for images to be output: %s\n", buf_size, strerror(errno));
-            goto FailExit;
-        }
-        memset(buffer, 0, buf_size);
-
-        header = buffer;
-        header->bfType = 0x4d42;
-        header->bfSize = (uint32_t)buf_size;
-        header->bfReserved1 = 0;
-        header->bfReserved2 = 0;
-        header->bfOffBits = sizeof header[0];
-        header->biSize = 40;
-        header->biWidth = bw;
-        header->biHeight = bh;
-        header->biPlanes = 1;
-        header->biBitCount = 4;
-        header->biCompression = 0;
-        header->biSizeImage = (uint32_t)(pitch * bh);
-        header->biXPelsPerMeter = 0;
-        header->biYPelsPerMeter = 0;
-        header->biClrUsed = 16;
-        header->biClrImportant = 0;
-        for (i = 0; i < 16; i++)
-        {
-            header->Palette[i] = console_palette[i].packed;
-        }
-
-        bmp = (void *)&header[1];
-        for (cy = 0; cy < rendered_frame->h; cy++)
-        {
-            uint32_t *con_row = rendered_frame->row[cy];
-            uint8_t *col_row = rendered_frame->c_row[cy];
-            uint32_t dy = cy * fv->glyph_height;
-            for (cx = 0; cx < rendered_frame->w; cx++)
+            pitch = (((size_t)bw - 1) / 32 + 1) * 4;
+            buf_size = sizeof header[0] + pitch * bh;
+            buffer = malloc(buf_size);
+            if (!buffer)
             {
-                uint32_t code = con_row[cx];
-                uint8_t color = col_row[cx];
-                int font_x = (int)((code % fv->glyph_matrix_cols) * fv->glyph_width);
-                int font_y = (int)((code / fv->glyph_matrix_cols) * fv->glyph_height);
-                uint32_t dx = cx * fv->glyph_width;
-                uint32_t x, y;
-                for (y = 0; y < fv->glyph_height; y++)
+                fprintf(fv->log_fp, "Could not allocate memory (%zu bytes) for images to be output: %s\n", buf_size, strerror(errno));
+                goto FailExit;
+            }
+            memset(buffer, 0, buf_size);
+            if (out_offset_of_file_body) *out_offset_of_file_body = sizeof header[0];
+
+            header = buffer;
+            header->bfType = 0x4d42;
+            header->bfSize = (uint32_t)buf_size;
+            header->bfReserved1 = 0;
+            header->bfReserved2 = 0;
+            header->bfOffBits = sizeof header[0];
+            header->biSize = 40;
+            header->biWidth = bw;
+            header->biHeight = bh;
+            header->biPlanes = 1;
+            header->biBitCount = 1;
+            header->biCompression = 0;
+            header->biSizeImage = (uint32_t)(pitch * bh);
+            header->biXPelsPerMeter = 0;
+            header->biYPelsPerMeter = 0;
+            header->biClrUsed = 2;
+            header->biClrImportant = 0;
+            header->Palette[0] = console_palette[0].packed;
+            header->Palette[1] = console_palette[15].packed;
+
+            bmp = (void*)&header[1];
+            for (cy = 0; cy < rendered_frame->h; cy++)
+            {
+                uint32_t* con_row = rendered_frame->row[cy];
+                uint32_t dy = cy * fv->glyph_height;
+                for (cx = 0; cx < rendered_frame->w; cx++)
                 {
-                    uint32_t *src_row = fm->RowPointers[font_y + y];
-                    uint8_t *dst_row = &bmp[(size_t)(bh - 1 - (dy + y)) * pitch];
-                    for (x = 0; x < fv->glyph_width; x += 2)
+                    uint32_t code = con_row[cx];
+                    int font_x = (int)((code % fv->glyph_matrix_cols) * fv->glyph_width);
+                    int font_y = (int)((code / fv->glyph_matrix_cols) * fv->glyph_height);
+                    uint32_t dx = cx * fv->glyph_width;
+                    uint32_t x, y;
+                    for (y = 0; y < fv->glyph_height; y++)
                     {
-                        size_t index = (size_t)(dx + x) >> 1;
-                        dst_row[index] = 0;
-                        if (src_row[font_x + x + 0] > 0xff7f7f7f) dst_row[index] |= color << 4;
-                        if (src_row[font_x + x + 1] > 0xff7f7f7f) dst_row[index] |= color;
+                        uint32_t* src_row = fm->RowPointers[font_y + y];
+                        uint8_t* dst_row = &bmp[(size_t)(bh - 1 - (dy + y)) * pitch];
+                        for (x = 0; x < fv->glyph_width; x ++)
+                        {
+                            size_t slot = (size_t)(dx + x) / 8;
+                            int bit = 7 - x % 8;
+                            if (src_row[font_x + x] > 0xff7f7f7f) dst_row[slot] |= 1 << bit;
+                        }
+                    }
+                }
+            }
+        }
+        else
+        {
+#pragma pack(push, 1)
+            struct Bmp4BitPerPixelHeader
+            {
+                uint16_t    bfType;
+                uint32_t    bfSize;
+                uint16_t    bfReserved1;
+                uint16_t    bfReserved2;
+                uint32_t    bfOffBits;
+                uint32_t    biSize;
+                int32_t     biWidth;
+                int32_t     biHeight;
+                uint16_t    biPlanes;
+                uint16_t    biBitCount;
+                uint32_t    biCompression;
+                uint32_t    biSizeImage;
+                int32_t     biXPelsPerMeter;
+                int32_t     biYPelsPerMeter;
+                uint32_t    biClrUsed;
+                uint32_t    biClrImportant;
+                uint32_t    Palette[16];
+            } *header;
+#pragma pack(pop)
+
+            pitch = (((size_t)bw * 4 - 1) / 32 + 1) * 4;
+            buf_size = sizeof header[0] + pitch * bh;
+            buffer = malloc(buf_size);
+            if (!buffer)
+            {
+                fprintf(fv->log_fp, "Could not allocate memory (%zu bytes) for images to be output: %s\n", buf_size, strerror(errno));
+                goto FailExit;
+            }
+            memset(buffer, 0, buf_size);
+            if (out_offset_of_file_body) *out_offset_of_file_body = sizeof header[0];
+
+            header = buffer;
+            header->bfType = 0x4d42;
+            header->bfSize = (uint32_t)buf_size;
+            header->bfReserved1 = 0;
+            header->bfReserved2 = 0;
+            header->bfOffBits = sizeof header[0];
+            header->biSize = 40;
+            header->biWidth = bw;
+            header->biHeight = bh;
+            header->biPlanes = 1;
+            header->biBitCount = 4;
+            header->biCompression = 0;
+            header->biSizeImage = (uint32_t)(pitch * bh);
+            header->biXPelsPerMeter = 0;
+            header->biYPelsPerMeter = 0;
+            header->biClrUsed = 16;
+            header->biClrImportant = 0;
+            for (i = 0; i < 16; i++)
+            {
+                header->Palette[i] = console_palette[i].packed;
+            }
+
+            bmp = (void*)&header[1];
+            for (cy = 0; cy < rendered_frame->h; cy++)
+            {
+                uint32_t* con_row = rendered_frame->row[cy];
+                uint8_t* col_row = rendered_frame->c_row[cy];
+                uint32_t dy = cy * fv->glyph_height;
+                for (cx = 0; cx < rendered_frame->w; cx++)
+                {
+                    uint32_t code = con_row[cx];
+                    uint8_t color = col_row[cx];
+                    int font_x = (int)((code % fv->glyph_matrix_cols) * fv->glyph_width);
+                    int font_y = (int)((code / fv->glyph_matrix_cols) * fv->glyph_height);
+                    uint32_t dx = cx * fv->glyph_width;
+                    uint32_t x, y;
+                    for (y = 0; y < fv->glyph_height; y++)
+                    {
+                        uint32_t* src_row = fm->RowPointers[font_y + y];
+                        uint8_t* dst_row = &bmp[(size_t)(bh - 1 - (dy + y)) * pitch];
+                        for (x = 0; x < fv->glyph_width; x += 2)
+                        {
+                            size_t index = (size_t)(dx + x) >> 1;
+                            dst_row[index] = 0;
+                            if (src_row[font_x + x + 0] > 0xff7f7f7f) dst_row[index] |= color << 4;
+                            if (src_row[font_x + x + 1] > 0xff7f7f7f) dst_row[index] |= color;
+                        }
                     }
                 }
             }
@@ -2022,6 +2108,7 @@ static int create_rendered_image(fontvideo_p fv, fontvideo_frame_p rendered_fram
             goto FailExit;
         }
         memset(buffer, 0, buf_size);
+        if (out_offset_of_file_body) *out_offset_of_file_body = sizeof header[0];
 
         header = buffer;
         header->bfType = 0x4d42;
@@ -2193,6 +2280,7 @@ static void output_frame(fontvideo_p fv, fontvideo_frame_p f)
             FILE* fp = NULL;
             void* bmp_buf = NULL;
             size_t bmp_len = 0;
+            size_t bmp_body_offset;
 
             snprintf(buf, sizeof buf, "%s%08u.bmp", fv->output_frame_images_prefix, f->index);
             fp = fopen(buf, "wb");
@@ -2202,7 +2290,7 @@ static void output_frame(fontvideo_p fv, fontvideo_frame_p f)
                 break;
             }
 
-            if (create_rendered_image(fv, f, &bmp_buf, &bmp_len))
+            if (create_rendered_image(fv, f, &bmp_buf, &bmp_len, &bmp_body_offset))
             {
                 if (!fwrite(bmp_buf, bmp_len, 1, fp))
                 {
