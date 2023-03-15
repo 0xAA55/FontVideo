@@ -3,6 +3,7 @@
 
 #include"avdec.h"
 #include"siowrap.h"
+#include"aviwriter.h"
 
 #include<stdio.h>
 #include<rttimer/rttimer.h>
@@ -194,8 +195,14 @@ typedef struct fontvideo_struct
     void *old_console_buffer;
 #endif
 
+    // Config: the AVI file path to save the AVI file, or NULL if don't want the AVI file.
+    char* output_avi_file;
+
     // Config: if render to image files, this is the prefix of how to name the image sequence.
     char *output_frame_images_prefix;
+
+    // Status: AVI writer to generate AVI file
+    AVIWriter_p avi_writer;
 
     // Status: is doing media file decoding?
     atomic_int doing_decoding;
