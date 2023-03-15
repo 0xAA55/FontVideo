@@ -20,6 +20,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\avdec.c" />
+    <ClCompile Include="..\aviwriter.c" />
     <ClCompile Include="..\entry.c" />
     <ClCompile Include="..\fontvideo.c" />
     <ClCompile Include="..\bunchalloc.c" />
@@ -29,9 +30,11 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="..\makefile" />
+    <None Include="..\test.avi" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\avdec.h" />
+    <ClInclude Include="..\aviwriter.h" />
     <ClInclude Include="..\fontvideo.h" />
     <ClInclude Include="..\bunchalloc.h" />
     <ClInclude Include="..\siowrap.h" />
