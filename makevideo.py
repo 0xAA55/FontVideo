@@ -57,7 +57,7 @@ if __name__ == '__main__':
 		'-shortest',
 		ofile])
 
-	#os.remove(vfile)
+	os.remove(vfile)
 	os.remove(xfile)
 
 
