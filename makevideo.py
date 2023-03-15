@@ -24,15 +24,11 @@ if __name__ == '__main__':
 		except ValueError:
 			iname = ifile
 			iext = 'mp4'
-		ofile = f'{iname}_o.mp4'
-		oname = ofile.rsplit('.', 1)[0]
-	print(f'Output file is `{ofile}`')
+		oext = 'mp4'
+		ofile = f'{iname}_o.{oext}'
+	oname = ofile.rsplit('.', 1)[0]
 	if os.path.exists(ofile): os.remove(ofile)
-	print('Deleted the existing file.')
-
-	if not os.path.exists('temp'):
-		print('Make subdirectory `temp`')
-		os.makedirs('temp')
+	print(f'Output file is `{ofile}`')
 
 	if os.name == 'nt':
 		fexec = 'FontVideo.exe'
@@ -43,46 +39,25 @@ if __name__ == '__main__':
 	else:
 		fexec = 'fontvideo'
 
-	tfile = os.path.join('temp', f'{iname}_t.m4v')
-	afile = os.path.join('temp', f'{iname}_a.m4a')
-	if os.path.exists(tfile): os.remove(tfile)
-	if os.path.exists(afile): os.remove(afile)
+	vfile = f'{iname}_a.avi'
+	if os.path.exists(vfile): os.remove(vfile)
 	xfile = f'{oname}_t.txt'
-	targs = ['ffmpeg', '-i', ifile, '-filter:v', 'fps=30', '-an', '-shortest', tfile]
-	aargs = ['ffmpeg', '-i', ifile, '-c:a', 'aac', '-vn', '-shortest', afile]
-	fargs = [fexec,
-		'-i', tfile,
+	subprocess.run([fexec,
+		'-i', ifile,
 		'-b',
 		'-m',
 		'-h', '70',
 		'--assets-meta', os.path.join('assets','meta_gb2312_16.ini'),
-		'--no-avoid-repetition',
-		'--output-frame-image-sequence', os.path.join('temp', 'f_'),
-		'-o', xfile]
-	tproc = subprocess.Popen(targs)
-	aproc = subprocess.Popen(aargs)
-	tproc.wait()
-	fproc = subprocess.Popen(fargs)
-	aproc.wait()
-	fproc.wait()
-
-	jargs = ['ffmpeg',
-		'-framerate', '30',
-		'-i', os.path.join('temp', 'f_%08d.bmp')]
-	if os.path.exists(afile): jargs += ['-i', afile]
-	jargs += ['-c:v', 'libx264',
-		'-filter:v', 'fps=30',
-		'-c:a', 'copy',
+		'--output-avi-file', vfile,
+		'-o', xfile])
+	subprocess.run(['ffmpeg',
+		'-i', vfile,
+		'-c:v', 'libx264',
+		'-c:a', 'aac',
 		'-shortest',
-		ofile]
-	subprocess.run(jargs)
-	for df in glob.glob(os.path.join('temp', 'f_*.bmp')):
-		try:
-			os.remove(df)
-		except Exception as e:
-			print(f'Failed to delete `{df}`: {str(e)}')
-	if os.path.exists(tfile): os.remove(tfile)
-	if os.path.exists(afile): os.remove(afile)
-	os.rmdir('temp')
+		ofile])
+
+	#os.remove(vfile)
+	os.remove(xfile)
 
 
