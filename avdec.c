@@ -8,11 +8,11 @@
 #include<libavutil/opt.h>
 #include<libavutil/error.h>
 
-static void get_video_format(AVCodecContext *ctx, avdec_video_format_p vf)
+static void get_video_format(AVCodecContext *ctx, AVStream *s, avdec_video_format_p vf)
 {
     vf->width = ctx->width;
     vf->height = ctx->height;
-    vf->framerate = av_q2d(ctx->framerate);
+    vf->framerate = av_q2d(s->r_frame_rate);
     vf->pixel_format = ctx->pix_fmt;
 }
 
@@ -102,7 +102,7 @@ avdec_p avdec_open(char *path, FILE *log_fp)
             goto FailExit;
         }
 
-        get_video_format(av->video_codec_context, &av->decoded_vf);
+        get_video_format(av->video_codec_context, av->video_stream, &av->decoded_vf);
     }
     else
     {
@@ -174,7 +174,7 @@ void avdec_get_video_format(avdec_p av, avdec_video_format_p vf)
 {
     if (!av || !vf || !av->video_codec_context) return;
 
-    get_video_format(av->video_codec_context, vf);
+    get_video_format(av->video_codec_context, av->video_stream, vf);
 }
 
 void avdec_get_audio_format(avdec_p av, avdec_audio_format_p af)
