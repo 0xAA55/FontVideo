@@ -1878,7 +1878,7 @@ static void fv_on_get_audio(avdec_p av, void **samples_of_channel, int channel_c
     if (fv->output_avi_file) ensure_avi_writer(fv);
     if (fv->avi_writer)
     {
-        check_nan_inf(samples_of_channel[0], channel_count, num_samples_per_channel);
+        // check_nan_inf(samples_of_channel[0], channel_count, num_samples_per_channel);
         AVIWriterWriteAudio(fv->avi_writer, samples_of_channel[0], (uint32_t)(num_samples_per_channel * channel_count * sizeof(float)));
     }
 
