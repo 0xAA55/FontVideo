@@ -13,7 +13,7 @@
 
 void usage(char *argv0)
 {
-    fprintf(stderr, "Usage: %s -i <input> [-o <output.txt>] [-v] [-p <seconds>] [-m] [-n] [-w <width>] [-h <height>] [-s <width> <height>] [-S <from_sec>] [-b] [--white-background] [--no-frameskip] [--algorithm <1|2>] [--avoid-repetition] [--no-avoid-repetition] [--no-auto-aspect-adjust] [--assets-meta <metafile.ini>] [--output-frame-image-sequence <prefix>]\n"
+    fprintf(stderr, "Usage: %s -i <input> [-o <output.txt>] [-v] [-p <seconds>] [-m] [-n] [-w <width>] [-h <height>] [-s <width> <height>] [-S <from_sec>] [-b] [--white-background] [--no-frameskip] [--algorithm <1|2>] [--avoid-repetition] [--no-avoid-repetition] [--no-auto-aspect-adjust] [--assets-meta <metafile.ini>] [--output-avi-file <out.avi>] [--output-frame-image-sequence <prefix>]\n"
         "Or: %s <input>\n"
         "\t-i: Specify the input video file name.\n"
         "\t-o: [Optional] Specify the output text file name.\n"
@@ -47,6 +47,7 @@ void usage(char *argv0)
         "\t--no-avoid-repetition: [Optional, default] Do not try to avoid repetition of using glyphs.\n"
         "\t--no-auto-aspect-adjust: [Optional] Do not adjsut aspect ratio by changing output width automatically.\n"
         "\t--assets-meta: [Optional] Use specified meta file, default is to use 'assets"SUBDIR"meta.ini'.\n"
+        "\t--output-avi-file: [Optional] Output to an AVI file.\n"
         "\t--output-frame-image-sequence: [Optional] Output each frame image to a directory. The format of the image is `bmp`.\n"
         "", argv0, argv0);
 }
@@ -73,7 +74,8 @@ int main(int argc, char **argv)
     int no_auto_aspect_adjust = 0;
     int algorithm = alg_differency;
     char *assets_meta = "assets"SUBDIR"meta.ini";
-    char *output_frame_images_prefix = NULL;
+    char* output_avi_file = NULL;
+    char* output_frame_images_prefix = NULL;
     FILE *fp_log = stderr;
 
 #ifdef _WIN32
@@ -130,7 +132,7 @@ int main(int argc, char **argv)
                     perror("Trying to open output file.");
                     goto BadUsageExit;
                 }
-                mute = 1;
+                // mute = 1;
                 real_time_show = 0;
                 no_frameskip = 1;
             }
@@ -227,10 +229,17 @@ int main(int argc, char **argv)
                     goto BadUsageExit;
                 }
             }
+            else if (!strcmp(argv[i], "--output-avi-file"))
+            {
+                if (++i >= argc) goto BadUsageExit;
+                output_avi_file = argv[i++];
+                no_frameskip = 1;
+            }
             else if (!strcmp(argv[i], "--output-frame-image-sequence"))
             {
                 if (++i >= argc) goto BadUsageExit;
                 output_frame_images_prefix = argv[i++];
+                no_frameskip = 1;
             }
             else if (!strcmp(argv[i], "--log"))
             {
@@ -294,6 +303,7 @@ int main(int argc, char **argv)
     if (no_frameskip) fv->no_frameskip = 1;
     if (normalize_input) fv->normalize_input = 1;
     if (avoid_repetition) fv->avoid_repetition = 1;
+    if (output_avi_file) fv->output_avi_file = output_avi_file;
     if (output_frame_images_prefix) fv->output_frame_images_prefix = output_frame_images_prefix;
 
     if (real_time_show) fv_show(fv);
