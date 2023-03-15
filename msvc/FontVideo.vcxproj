@@ -30,7 +30,6 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="..\makefile" />
-    <None Include="..\test.avi" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\avdec.h" />
