@@ -1857,7 +1857,7 @@ static void fv_on_get_audio(avdec_p av, void **samples_of_channel, int channel_c
         AVIWriterWriteAudio(fv->avi_writer, samples_of_channel[0], num_samples_per_channel * channel_count * sizeof(float));
     }
 
-    if (!fv->do_audio_output || !fv->sio) return;
+    if (!fv->do_audio_output) return;
 
     a = audio_create(av->decoded_af.sample_rate, samples_of_channel[0], channel_count, num_samples_per_channel, timestamp);
     if (!a)
