@@ -132,6 +132,8 @@ int main(int argc, char **argv)
                     perror("Trying to open output file.");
                     goto BadUsageExit;
                 }
+                // Write BOM
+                fwrite("\xEF\xBB\xBF", 3, 1, fp_out);
                 // mute = 1;
                 real_time_show = 0;
                 no_frameskip = 1;
