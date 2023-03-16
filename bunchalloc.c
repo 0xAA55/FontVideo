@@ -13,11 +13,11 @@ void* bunchalloc(size_t alignment, size_t headersize, ...)
 	size_t i, count = 0;
 	size_t member_offset, desired_size;;
 	size_t padded_size = 0;
-	size_t cur_offset = 0, esti_size, cur_size;
+	size_t cur_offset = 0, cur_size;
 	void* ret = NULL;
 	va_list ap;
 	if (!alignment) alignment = sizeof(size_t) * 2;
-	esti_size = make_padded(headersize, alignment) + alignment /* allocate extra memory for aligning body data to an aligned address */;
+	cur_size = make_padded(headersize, alignment);
 
 	va_start(ap, headersize);
 
@@ -29,20 +29,20 @@ void* bunchalloc(size_t alignment, size_t headersize, ...)
 		count += 1;
 
 		padded_size = make_padded(desired_size, alignment);
-		cur_offset = esti_size;
-		esti_size += padded_size;
+		cur_offset = cur_size;
+		cur_size += padded_size;
 	};
 
 	va_end(ap);
 
-	ret = malloc(esti_size);
+	ret = malloc(cur_size);
 	if (!ret) return NULL;
-	memset(ret, 0, esti_size);
+	memset(ret, 0, cur_size);
 
 	va_start(ap, headersize);
 
 	// Align body data to an aligned address
-	cur_size = make_padded((size_t)ret + headersize, alignment) - (size_t)ret;
+	cur_size = make_padded(headersize, alignment);
 	for (i = 0; i < count; i++)
 	{
 		member_offset = va_arg(ap, size_t);
