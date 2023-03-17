@@ -2060,8 +2060,8 @@ static int create_1bit_image(fontvideo_p fv, fontvideo_frame_p rendered_frame, v
                 for (x = 0; x < fv->glyph_width; x++)
                 {
                     size_t slot = (size_t)(dx + x) / 8;
-                    int bit = 7 - x % 8;
-                    if (src_row[font_x + x] > 0xff7f7f7f) dst_row[slot] |= 1 << bit;
+                    int bit = 7 - (dx + x) % 8;
+                    if (src_row[font_x + x] > 0xff7f7f7f) dst_row[slot] |= 1u << bit;
                 }
             }
         }
