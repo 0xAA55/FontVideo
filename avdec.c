@@ -387,7 +387,7 @@ int avdec_decode(avdec_p av, pfn_on_get_video on_get_video, pfn_on_get_audio on_
                 av_packet_free(&packet);
                 if (av->video_eof && av->audio_eof) break;
             }
-            if ((packet && packet->stream_index == av->video_index) || !packet)
+            if (av->video_codec_context && ((packet && packet->stream_index == av->video_index) || !packet))
             {
                 rv = avcodec_send_packet(av->video_codec_context, packet);
                 if (rv == AVERROR_EOF)
@@ -413,7 +413,7 @@ int avdec_decode(avdec_p av, pfn_on_get_video on_get_video, pfn_on_get_audio on_
                     goto FailExit;
                 }
             }
-            if ((packet && packet->stream_index == av->audio_index) || !packet)
+            if (av->audio_codec_context && ((packet && packet->stream_index == av->audio_index) || !packet))
             {
                 rv = avcodec_send_packet(av->audio_codec_context, packet);
                 if (rv == AVERROR_EOF)
@@ -445,7 +445,7 @@ int avdec_decode(avdec_p av, pfn_on_get_video on_get_video, pfn_on_get_audio on_
     else
     {
         int is_last_frame;
-        if ((target & avt_for_video) == avt_for_video)
+        if (av->video_codec_context && ((target & avt_for_video) == avt_for_video))
         {
             frame_received = 0;
             while (!frame_received)
@@ -488,7 +488,7 @@ int avdec_decode(avdec_p av, pfn_on_get_video on_get_video, pfn_on_get_audio on_
                 av_packet_free(&packet);
             }
         }
-        if ((target & avt_for_audio) == avt_for_audio)
+        if (av->audio_codec_context && ((target & avt_for_audio) == avt_for_audio))
         {
             frame_received = 0;
             while (!frame_received)
