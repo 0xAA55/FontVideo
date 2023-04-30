@@ -23,6 +23,11 @@ static int WriteBitmapHeader(AVIWriter_p aw)
 	return 1;
 }
 
+static int _min(int a, int b)
+{
+	return a < b ? a : b;
+}
+
 AVIWriter_p AVIWriterStart
 (
 	const char* write_to,
@@ -66,7 +71,7 @@ AVIWriter_p AVIWriterStart
 	aw->BitmapHeaderSize = sizeof aw->VideoFormat;
 	if (video_format->biBitCount <= 8)
 	{
-		aw->PaletteUsed = min(1 << video_format->biBitCount, video_format->biClrUsed);
+		aw->PaletteUsed = _min(1 << video_format->biBitCount, video_format->biClrUsed);
 		memcpy(&aw->VideoPalette, palette, aw->PaletteUsed * sizeof palette[0]);
 		aw->BitmapHeaderSize += aw->PaletteUsed * sizeof palette[0];
 	}
