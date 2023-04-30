@@ -329,7 +329,7 @@ static void on_audio_decoded(avdec_p av, pfn_on_get_audio on_get_audio)
     }
     else
     {
-        on_get_audio(av, (void **)f->data, f->channels, f->nb_samples, time_position);
+        on_get_audio(av, (void **)f->data, f->ch_layout.nb_channels, f->nb_samples, time_position);
     }
     return;
 FailExit:
