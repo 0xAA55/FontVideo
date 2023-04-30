@@ -292,11 +292,12 @@ static union colorBGR
     {{255, 255, 255}}
 };
 
+/*
 #define _PADDED(value, unit) (((value) - 1) / (unit) + 1) * (unit)
 static ptrdiff_t make_padded(ptrdiff_t value, int unit)
 {
     return _PADDED(value, unit);
-}
+}*/
 
 // For locking the frames link list of `fv->frames` and `fv->frame_last`, not for locking every individual frames
 static void lock_frame_linklist(fontvideo_p fv)
@@ -756,7 +757,28 @@ FailExit:
     return 0;
 }
 
-static void normalize_glyph(float *out, const float *in, size_t glyph_pixel_count);
+/*
+void normalize_glyph(float* out, const float* in, size_t glyph_pixel_count)
+{
+    double lengthsq = 0;
+    double length;
+    size_t i;
+
+    for (i = 0; i < glyph_pixel_count; i++)
+    {
+        double in_val = in[i];
+        lengthsq += in_val * in_val;
+    }
+
+    length = sqrt(lengthsq);
+    if (length < 0.000001) length = 1.0;
+
+    for (i = 0; i < glyph_pixel_count; i++)
+    {
+        double in_val = in[i];
+        out[i] = (float)(in_val / length);
+    }
+}*/
 
 typedef struct code_lum_struct
 {
@@ -881,28 +903,6 @@ FailExit:
     free(glyph_array);
     UB_Free(&sorted_gm);
     return 0;
-}
-
-void normalize_glyph(float* out, const float* in, size_t glyph_pixel_count)
-{
-    double lengthsq = 0;
-    double length;
-    size_t i;
-
-    for (i = 0; i < glyph_pixel_count; i++)
-    {
-        double in_val = in[i];
-        lengthsq += in_val * in_val;
-    }
-
-    length = sqrt(lengthsq);
-    if (length < 0.000001) length = 1.0;
-    
-    for (i = 0; i < glyph_pixel_count; i++)
-    {
-        double in_val = in[i];
-        out[i] = (float)(in_val / length);
-    }
 }
 
 static size_t get_glyph_bitmap_length(size_t num_glyph_codes)
@@ -1392,8 +1392,8 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                     src_b = (float)src_pixel->u8[2] / 255.0f;
                     src_lum = (float)(sqrt(src_r * src_r + src_g * src_g + src_b * src_b) / sqrt_3);
                     src_brightness += (double)src_lum; // Get brightness
-                    ms.src_min = min(ms.src_min, src_lum);
-                    ms.src_max = max(ms.src_max, src_lum);
+                    ms.src_min = (float)fmin(ms.src_min, src_lum);
+                    ms.src_max = (float)fmax(ms.src_max, src_lum);
                     buf_row[x] = src_lum; // Store for normalize
                 }
             }
@@ -1412,8 +1412,6 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                     left = 0,
                     right = (int)(num_glyph_codes - 1),
                     mid = (int)(num_glyph_codes / 2);
-                float left_brightness = fv->glyph_brightness[left];
-                float right_brightness = fv->glyph_brightness[right];
                 // bisection approximation
                 for (;;)
                 {
@@ -1421,12 +1419,10 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                     if (src_brightness < mid_brightness)
                     {
                         right = mid;
-                        right_brightness = fv->glyph_brightness[right];
                     }
                     else if (src_brightness > mid_brightness)
                     {
                         left = mid;
-                        left_brightness = fv->glyph_brightness[left];
                     }
                     else
                     {
@@ -1464,7 +1460,6 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                 int ecp = 0;
                 const int palette_brightness_window = 12;
                 int hcbw = palette_brightness_window / 2;
-                float sbr, ebr;
                 double rgb_normalize;
                 float best_score;
 
@@ -1502,8 +1497,6 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
 
                 scp = 0;
                 ecp = 15;
-                sbr = palette_brightness_index[scp].brightness;
-                ebr = palette_brightness_index[ecp].brightness;
                 for (; scp != ecp;)
                 {
                     int mid = (scp + ecp) / 2;
@@ -1513,12 +1506,10 @@ static void do_cpu_render(fontvideo_p fv, fontvideo_frame_p f)
                     if (avr_brightness < mb)
                     {
                         ecp = mid;
-                        ebr = palette_brightness_index[ecp].brightness;
                     }
                     else if (src_brightness > mb)
                     {
                         scp = mid;
-                        sbr = palette_brightness_index[scp].brightness;
                     }
                     else
                     {
@@ -1845,6 +1836,7 @@ static void ensure_avi_writer(fontvideo_p fv)
     }
 }
 
+/*
 static int check_nan_inf(float *audio, int channel_count, size_t num_samples_per_channel)
 {
     size_t i, num;
@@ -1867,7 +1859,7 @@ static int check_nan_inf(float *audio, int channel_count, size_t num_samples_per
         prevs[ch] = audio[i]; 
     }
     return ret;
-}
+}*/
 
 static void fv_on_get_audio(avdec_p av, void **samples_of_channel, int channel_count, size_t num_samples_per_channel, double timestamp)
 {
