@@ -1,10 +1,10 @@
 CC=gcc
 LD=gcc
-CFLAGS=-std=c11 -Wall -O3 -flto -mavx -fopenmp -I. -Iinclude -DGLEW_STATIC
-LDLIBS=-lavformat -lavcodec -lavutil -lswresample -lswscale -lsoundio -lm $$(pkg-config --static --libs glfw3) -lGL -lGLU -Lrttimer -lrttimer -LC_dict -lcdict -fopenmp
-LDFLAGS=-O3
+CFLAGS=-std=c11 -Wall -O3 -flto -mavx -fopenmp -I. -Iinclude
+LDLIBS=-lavformat -lavcodec -lavutil -lswresample -lswscale -lsoundio -lm -Lrttimer -lrttimer -LC_dict -lcdict -fopenmp
+LDFLAGS=-O3 -Llib
 
-OBJS=entry.o fontvideo.o avdec.o siowrap.o unibmp.o utf.o glew.o
+OBJS=entry.o fontvideo.o avdec.o siowrap.o unibmp.o utf.o bunchalloc.o aviwriter.o
 
 all: fontvideo
 
