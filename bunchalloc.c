@@ -1,5 +1,6 @@
 #include"bunchalloc.h"
 #include <string.h>
+#include <stdlib.h>
 #include <stdarg.h>
 #include <stddef.h>
 
