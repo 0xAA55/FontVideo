@@ -1,7 +1,7 @@
 CC=gcc
 LD=gcc
-CFLAGS=-std=c11 -Wall -O3 -flto -mavx -fopenmp -I. -Iinclude
-LDLIBS=-lavformat -lavcodec -lavutil -lswresample -lswscale -lsoundio -lm -Lrttimer -lrttimer -LC_dict -lcdict -fopenmp
+CFLAGS=-std=c11 -Wall -O3 -flto -mavx -fopenmp -I. -Iinclude -DFONTVIDEO_NO_SOUND -DNO_THREADS_H
+LDLIBS=-lavformat -lavcodec -lavutil -lswresample -lswscale -lm -Lrttimer -lrttimer -LC_dict -lcdict -fopenmp
 LDFLAGS=-O3 -Llib
 
 OBJS=entry.o fontvideo.o avdec.o siowrap.o unibmp.o utf.o bunchalloc.o aviwriter.o

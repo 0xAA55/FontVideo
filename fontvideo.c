@@ -10,7 +10,6 @@
 #include<assert.h>
 #include<C_dict/dictcfg.h>
 #include<omp.h>
-#include<threads.h>
 
 #include<math.h>
 
@@ -23,11 +22,6 @@
 
 static const int discard_frame_num_threshold = 10;
 static const double sqrt_3 = 1.7320508075688772935274463415059;
-
-static uint32_t get_thread_id()
-{
-    return (uint32_t)thrd_current();
-}
 
 #ifdef _WIN32
 #define SUBDIR "\\"
@@ -162,6 +156,13 @@ static void relax_sleep(uint64_t milliseconds)
 #else // For non-Win32 appliction, assume it's linux/unix and runs in terminal
 
 #include <sched.h>
+#ifdef NO_THREADS_H
+#include<unistd.h>
+static uint32_t get_thread_id()
+{
+    return getpid();
+}
+#endif
 
 #ifndef __GNUC__
 #define __asm__ asm
@@ -230,6 +231,16 @@ static void relax_sleep(uint64_t milliseconds)
         case EINTR: break;
         }
     }
+}
+
+#endif
+
+#ifndef NO_THREADS_H
+#include<threads.h>
+
+static uint32_t get_thread_id()
+{
+    return (uint32_t)thrd_current();
 }
 #endif
 
