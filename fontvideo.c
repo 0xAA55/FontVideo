@@ -588,8 +588,8 @@ static int load_font(fontvideo_p fv, char *assets_dir, char *meta_file)
     size_t expected_font_code_count = 0;
     size_t glyph_pixel_count;
 
-    // snprintf(buf, sizeof buf, "%s"SUBDIR"%s", assets_dir, meta_file);
-    d_meta = dictcfg_load(meta_file, log_fp); // Parse ini file
+    snprintf(buf, sizeof buf, "%s"SUBDIR"%s", assets_dir, meta_file);
+    d_meta = dictcfg_load(buf, log_fp); // Parse ini file
     if (!d_meta)
     {
         fprintf(log_fp, "Could not load meta-file: '%s'.\n", meta_file);
@@ -2804,6 +2804,8 @@ fontvideo_p fv_create
 {
     fontvideo_p fv = NULL;
     avdec_audio_format_t af = { 0 };
+    char* assets_meta_dir = NULL;
+    char* assets_meta_basename = NULL;
 
     fv = calloc(1, sizeof fv[0]);
     if (!fv) return fv;
@@ -2833,7 +2835,23 @@ fontvideo_p fv_create
 
     fv->precache_seconds = precache_seconds;
 
-    if (!load_font(fv, "assets", assets_meta_file)) goto FailExit;
+#ifdef _WIN32
+    assets_meta_basename = strrchr(assets_meta_file, '\\');
+#endif
+    if (!assets_meta_basename) assets_meta_basename = strrchr(assets_meta_file, '/');
+    if (assets_meta_basename)
+    {
+        assets_meta_dir = assets_meta_file;
+        assets_meta_basename[0] = '\0';
+        assets_meta_basename = &assets_meta_basename[1];
+    }
+    else
+    {
+        assets_meta_dir = "";
+        assets_meta_basename = assets_meta_file;
+    }
+
+    if (!load_font(fv, assets_meta_dir, assets_meta_basename)) goto FailExit;
     if (fv->need_chcp || fv->real_time_play || log_fp == stdout || log_fp == stderr)
     {
         init_console(fv);
